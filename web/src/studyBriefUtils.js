@@ -4,14 +4,23 @@ export function briefSourceLabel(source) {
   return 'Fallback Brief'
 }
 
+export function briefTitle(brief) {
+  if (brief?.brief_type === 'lecture') return 'Lecture Study Brief'
+  if (brief?.brief_type === 'low_text') return 'Low Text Study Brief'
+  return 'Paper Understanding Brief'
+}
+
 export function formatBriefMarkdown(brief) {
   if (!brief) return ''
+  const title = briefTitle(brief)
   const lines = [
-    `# Paper Understanding Brief: ${brief.title || ''}`,
+    `# ${title}: ${brief.title || ''}`,
     '',
     `Source: ${briefSourceLabel(brief.source)}`,
+    `Text Quality: ${brief.text_quality || 'unknown'}`,
+    `OCR Needed: ${brief.ocr_needed ? 'yes' : 'no'}`,
     '',
-    '## TL;DR',
+    '## 核心速览',
     ...(brief.tldr || []).map(item => `- ${item}`),
     '',
     '## Problem & Motivation',

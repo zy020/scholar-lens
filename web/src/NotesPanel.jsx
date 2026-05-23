@@ -1,24 +1,36 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { getStudyBrief } from './api'
-import { briefSourceLabel, formatBriefMarkdown } from './studyBriefUtils'
+import { briefSourceLabel, briefTitle, formatBriefMarkdown } from './studyBriefUtils'
 
 export default function NotesPanel({ doc, docId }) {
   const [brief, setBrief] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [loaded, setLoaded] = useState(false)
 
-  if (!loaded && docId) {
-    setLoaded(true)
-    setLoading(true)
-    getStudyBrief(docId, false).then(data => {
-      setBrief(data)
-      setLoading(false)
-    }).catch(err => {
-      setError(err.message)
-      setLoading(false)
-    })
-  }
+  useEffect(() => {
+    let ignore = false
+
+    const loadBriefForDoc = async () => {
+      if (!docId) return
+
+      setLoading(true)
+      setError('')
+      try {
+        const data = await getStudyBrief(docId, false)
+        if (!ignore) setBrief(data)
+      } catch (err) {
+        if (!ignore) setError(err.message)
+      } finally {
+        if (!ignore) setLoading(false)
+      }
+    }
+
+    loadBriefForDoc()
+
+    return () => {
+      ignore = true
+    }
+  }, [docId])
 
   const loadBrief = async (force = false) => {
     if (!docId) return
@@ -53,11 +65,13 @@ export default function NotesPanel({ doc, docId }) {
     <div className="notes-panel paper-brief-panel">
       <div className="brief-header">
         <div>
-          <h3>Paper Understanding Brief</h3>
+          <h3>{brief ? briefTitle(brief) : 'Study Brief'}</h3>
           <p className="doc-title"><strong>{doc.name}</strong></p>
         </div>
         <div className="brief-header-actions">
           {brief && <span className={`brief-source ${brief.source}`}>{briefSourceLabel(brief.source)}</span>}
+          {brief?.text_quality && <span className={`brief-source ${brief.text_quality}`}>Text: {brief.text_quality}</span>}
+          {brief?.ocr_needed && <span className="brief-source fallback">OCR Needed</span>}
           <button onClick={() => loadBrief(true)} disabled={loading}>{loading ? '生成中...' : '重新生成'}</button>
           <button onClick={handleExport} disabled={!brief}>导出 Markdown</button>
         </div>
@@ -70,31 +84,33 @@ export default function NotesPanel({ doc, docId }) {
       {brief && (
         <>
           <section className="brief-section">
-            <h4>TL;DR</h4>
+            <h4>核心速览</h4>
             <ul>{brief.tldr.map((item, i) => <li key={i}>{item}</li>)}</ul>
           </section>
 
           <section className="brief-section">
-            <h4>Problem & Motivation</h4>
+            <h4>{brief.brief_type === 'lecture' ? '本讲主题与学习目标' : 'Problem & Motivation'}</h4>
             <p>{brief.problem}</p>
             <p className="brief-muted">{brief.motivation}</p>
           </section>
 
-          <section className="brief-section">
-            <h4>Contribution Map</h4>
-            <div className="brief-card-list">
-              {brief.contributions.map((item, i) => (
-                <article key={i} className="brief-card">
-                  <strong>{item.claim}</strong>
-                  {item.why_it_matters && <p>{item.why_it_matters}</p>}
-                  {item.evidence?.quote && <blockquote>{item.evidence.section_title}: {item.evidence.quote}</blockquote>}
-                </article>
-              ))}
-            </div>
-          </section>
+          {brief.contributions?.length > 0 && (
+            <section className="brief-section">
+              <h4>{brief.brief_type === 'lecture' ? '知识点脉络' : 'Contribution Map'}</h4>
+              <div className="brief-card-list">
+                {brief.contributions.map((item, i) => (
+                  <article key={i} className="brief-card">
+                    <strong>{item.claim}</strong>
+                    {item.why_it_matters && <p>{item.why_it_matters}</p>}
+                    {item.evidence?.quote && <blockquote>{item.evidence.section_title}: {item.evidence.quote}</blockquote>}
+                  </article>
+                ))}
+              </div>
+            </section>
+          )}
 
           <section className="brief-section">
-            <h4>Method Walkthrough</h4>
+            <h4>{brief.brief_type === 'lecture' ? '复习路径' : 'Method Walkthrough'}</h4>
             <ol>{brief.method_walkthrough.map((item, i) => <li key={i}><strong>{item.title}</strong><p>{item.explanation}</p></li>)}</ol>
           </section>
 
@@ -108,7 +124,7 @@ export default function NotesPanel({ doc, docId }) {
           </section>
 
           <section className="brief-section">
-            <h4>Reading Focus</h4>
+            <h4>{brief.brief_type === 'lecture' ? '复习重点' : 'Reading Focus'}</h4>
             <ul>{brief.reading_focus.map((item, i) => <li key={i}><strong>{item.section_title}</strong>: {item.reason}</li>)}</ul>
           </section>
 
