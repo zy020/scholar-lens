@@ -22,6 +22,11 @@ class DocumentSummary(BaseModel):
     name: str
     status: DocumentStatus = DocumentStatus.uploaded
     doc_type: str = "unknown"
+    text_quality: str = "unknown"
+    ocr_needed: bool = False
+    page_text_coverage: float = 0.0
+    section_quality: str = "unknown"
+    diagnostic_notes: list[str] = Field(default_factory=list)
     file_url: str = ""
     num_sections: int = 0
     num_chunks: int = 0
