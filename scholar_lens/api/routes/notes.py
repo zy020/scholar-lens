@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
 
-from scholar_lens.api.brief_builder import build_fallback_brief
+from scholar_lens.api.brief_builder import build_fallback_brief, build_lecture_fallback_brief, build_low_text_brief
 from scholar_lens.api.deps import get_memory_manager
 from scholar_lens.api.schemas import NotesResponse, PaperBriefResponse
 from scholar_lens.rag.document_store import DocumentStore
@@ -16,10 +16,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _store = DocumentStore()
+BRIEF_LLM_MIN_TIMEOUT_SECONDS = 120.0
 
 
 def _brief_cache_path(doc_id: str) -> Path:
-    return _store._root / doc_id / "paper_brief.json"
+    return _store.document_dir(doc_id) / "paper_brief.json"
 
 
 def _load_cached_brief(doc_id: str) -> PaperBriefResponse | None:
@@ -34,6 +35,14 @@ def _save_cached_brief(doc_id: str, brief: PaperBriefResponse) -> None:
         brief.model_dump_json(indent=2),
         encoding="utf-8",
     )
+
+
+def _is_lecture_doc(doc_type: str) -> bool:
+    return doc_type in {"slides_pdf", "courseware_pptx", "lecture_slide", "courseware"}
+
+
+def _needs_low_text_brief(text_quality: str, ocr_needed: bool) -> bool:
+    return text_quality in {"image_based", "unknown"} or (text_quality == "weak" and ocr_needed)
 
 
 @router.get("/{doc_id}", response_model=NotesResponse)
@@ -67,7 +76,19 @@ async def get_paper_brief(doc_id: str, force: bool = Query(False)):
     sections = _store.load_sections(doc_id)
     chunks = _store.load_chunks(doc_id)
 
-    from scholar_lens.api.brief_builder import build_llm_brief_prompt, parse_llm_brief_json
+    # Route low-text before any LLM call
+    if _needs_low_text_brief(doc.text_quality, doc.ocr_needed):
+        brief = build_low_text_brief(
+            doc_id=doc_id,
+            title=doc.name,
+            doc_type=doc.doc_type,
+            text_quality=doc.text_quality,
+            diagnostic_notes=doc.diagnostic_notes,
+        )
+        _save_cached_brief(doc_id, brief)
+        return brief
+
+    from scholar_lens.api.brief_builder import build_llm_brief_prompt, build_lecture_llm_brief_prompt, parse_llm_brief_json
     from scholar_lens.api.deps import get_settings
 
     settings = get_settings()
@@ -76,22 +97,50 @@ async def get_paper_brief(doc_id: str, force: bool = Query(False)):
             from langchain_core.messages import HumanMessage, SystemMessage
             from scholar_lens.core.llm_factory import ChatLLMFactory
 
-            llm = ChatLLMFactory.from_settings(settings).create(streaming=False)
-            prompt = build_llm_brief_prompt(doc.name, sections, chunks)
+            brief_llm_config = settings.llm.model_copy(
+                update={"request_timeout": max(settings.llm.request_timeout, BRIEF_LLM_MIN_TIMEOUT_SECONDS)}
+            )
+            llm = ChatLLMFactory.from_settings(settings).create(config=brief_llm_config, streaming=False)
+            if _is_lecture_doc(doc.doc_type):
+                prompt = build_lecture_llm_brief_prompt(doc.name, sections, chunks)
+            else:
+                prompt = build_llm_brief_prompt(doc.name, sections, chunks)
             response = await llm.ainvoke([
                 SystemMessage(content="You produce strict JSON for academic paper understanding briefs."),
                 HumanMessage(content=prompt),
             ])
             brief = parse_llm_brief_json(doc_id, doc.name, response.content)
+            if _is_lecture_doc(doc.doc_type):
+                brief.brief_type = "lecture"
+            brief.text_quality = doc.text_quality
+            brief.ocr_needed = doc.ocr_needed
             _save_cached_brief(doc_id, brief)
             return brief
         except Exception as exc:
-            brief = build_fallback_brief(doc_id, doc.name, sections, chunks)
+            if _is_lecture_doc(doc.doc_type):
+                brief = build_lecture_fallback_brief(
+                    doc_id, doc.name, sections, chunks,
+                    text_quality=doc.text_quality,
+                    ocr_needed=doc.ocr_needed,
+                )
+            else:
+                brief = build_fallback_brief(doc_id, doc.name, sections, chunks)
+                brief.text_quality = doc.text_quality
+                brief.ocr_needed = doc.ocr_needed
             brief.error = f"LLM brief failed; fallback used: {exc}"
             _save_cached_brief(doc_id, brief)
             return brief
 
-    brief = build_fallback_brief(doc_id, doc.name, sections, chunks)
+    if _is_lecture_doc(doc.doc_type):
+        brief = build_lecture_fallback_brief(
+            doc_id, doc.name, sections, chunks,
+            text_quality=doc.text_quality,
+            ocr_needed=doc.ocr_needed,
+        )
+    else:
+        brief = build_fallback_brief(doc_id, doc.name, sections, chunks)
+        brief.text_quality = doc.text_quality
+        brief.ocr_needed = doc.ocr_needed
     _save_cached_brief(doc_id, brief)
     return brief
 

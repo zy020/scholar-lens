@@ -65,6 +65,7 @@ def brief_client(tmp_path, monkeypatch):
 def test_brief_endpoint_returns_fallback_for_ready_doc(brief_client):
     client, store = brief_client
     doc = store.create_document("paper.pdf")
+    store.update_summary(doc.doc_id, text_quality="good", doc_type="research_paper")
     store.update_status(doc.doc_id, DocumentStatus.ready)
     store.save_sections(doc.doc_id, [
         SectionSummary(section_id="intro", title="Introduction", level=1, gist="Problem setup."),
@@ -135,6 +136,7 @@ def test_brief_endpoint_uses_brief_specific_timeout(tmp_path, monkeypatch):
     monkeypatch.setattr(llm_factory.ChatLLMFactory, "from_settings", lambda settings: FakeFactory())
 
     doc = store.create_document("paper.pdf")
+    store.update_summary(doc.doc_id, text_quality="good", doc_type="research_paper")
     store.update_status(doc.doc_id, DocumentStatus.ready)
     store.save_sections(doc.doc_id, [SectionSummary(section_id="intro", title="Introduction", level=1, gist="Problem setup.")])
     store.save_chunks(doc.doc_id, [
@@ -263,3 +265,59 @@ def test_llm_brief_prompt_stays_compact_for_long_documents():
 
     assert len(prompt) <= 7000
     assert "Return ONLY valid JSON" in prompt
+
+
+def test_brief_endpoint_returns_low_text_warning_for_image_based_slides(brief_client):
+    client, store = brief_client
+    doc = store.create_document("scanned-slides.pdf")
+    store.update_summary(
+        doc.doc_id,
+        doc_type="slides_pdf",
+        text_quality="image_based",
+        ocr_needed=True,
+        page_text_coverage=0.0,
+        section_quality="none",
+        diagnostic_notes=["当前 PDF 疑似图片型课件，文本抽取不足，建议启用 OCR 或 Vision Model。"],
+    )
+    store.update_status(doc.doc_id, DocumentStatus.ready)
+    store.save_sections(doc.doc_id, [])
+    store.save_chunks(doc.doc_id, [])
+
+    r = client.get(f"/api/notes/{doc.doc_id}/brief?force=true")
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["brief_type"] == "low_text"
+    assert data["text_quality"] == "image_based"
+    assert data["ocr_needed"] is True
+    assert "文本抽取不足" in data["problem"]
+
+
+def test_brief_endpoint_returns_lecture_brief_for_text_slides(brief_client):
+    client, store = brief_client
+    doc = store.create_document("lecture.pdf")
+    store.update_summary(
+        doc.doc_id,
+        doc_type="slides_pdf",
+        text_quality="good",
+        ocr_needed=False,
+        page_text_coverage=1.0,
+        section_quality="good",
+    )
+    store.update_status(doc.doc_id, DocumentStatus.ready)
+    store.save_sections(doc.doc_id, [
+        SectionSummary(section_id="l1", title="Lecture 1: Attention", level=1, gist="Attention connects tokens."),
+        SectionSummary(section_id="l2", title="Example", level=1, gist="Translation example."),
+        SectionSummary(section_id="l3", title="Exercise", level=1, gist="Practice question."),
+    ])
+    store.save_chunks(doc.doc_id, [
+        Chunk(chunk_id="c1", text="Self-attention computes token relationships.", metadata=ChunkMetadata(section_id="l1", doc_id=doc.doc_id)),
+    ])
+
+    r = client.get(f"/api/notes/{doc.doc_id}/brief?force=true")
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["brief_type"] == "lecture"
+    assert data["text_quality"] == "good"
+    assert any("本讲" in item or "知识点" in item for item in data["tldr"])
