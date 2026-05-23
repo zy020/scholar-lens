@@ -32,6 +32,53 @@ def test_fallback_brief_has_useful_sections():
     assert brief.contributions[0].evidence is not None
 
 
+from scholar_lens.api.main import create_app
+from scholar_lens.api.routes import documents, notes
+from scholar_lens.api.schemas import DocumentStatus
+from scholar_lens.parsers.models import Chunk, ChunkMetadata
+from scholar_lens.rag.document_store import DocumentStore
+from tests.unit.api.helpers import ASGITestClient
+
+
+@pytest.fixture
+def brief_client(tmp_path, monkeypatch):
+    store = DocumentStore(root=tmp_path)
+    monkeypatch.setattr(documents, "_store", store)
+    monkeypatch.setattr(notes, "_store", store)
+    app = create_app()
+    return ASGITestClient(app), store
+
+
+def test_brief_endpoint_returns_fallback_for_ready_doc(brief_client):
+    client, store = brief_client
+    doc = store.create_document("paper.pdf")
+    store.update_status(doc.doc_id, DocumentStatus.ready)
+    store.save_sections(doc.doc_id, [
+        SectionSummary(section_id="intro", title="Introduction", level=1, gist="Problem setup."),
+        SectionSummary(section_id="method", title="Method", level=1, gist="Method setup."),
+    ])
+    store.save_chunks(doc.doc_id, [
+        Chunk(chunk_id="c1", text="Transformer self-attention method.", metadata=ChunkMetadata(section_id="method", doc_id=doc.doc_id)),
+    ])
+
+    r = client.get(f"/api/notes/{doc.doc_id}/brief")
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["doc_id"] == doc.doc_id
+    assert data["source"] == "fallback"
+    assert len(data["tldr"]) >= 3
+    assert len(data["review_questions"]) >= 5
+
+
+def test_brief_endpoint_404_for_missing_doc(brief_client):
+    client, _store = brief_client
+
+    r = client.get("/api/notes/missing/brief")
+
+    assert r.status_code == 404
+
+
 def test_fallback_brief_preserves_english_terms():
     sections = [SectionSummary(section_id="m", title="Method", level=1, gist="Transformer attention.")]
     chunks = [
