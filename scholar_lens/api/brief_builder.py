@@ -154,6 +154,9 @@ def build_fallback_brief(
         doc_id=doc_id,
         title=title,
         source="fallback",
+        brief_type="paper",
+        text_quality="good",
+        ocr_needed=False,
         tldr=tldr[:5],
         problem=_quote(all_text, 300) or "未能从文档中可靠抽取问题定义，请先查看 Introduction。",
         motivation="优先从背景、引言和实验动机中判断该问题为什么值得研究。",
@@ -169,14 +172,19 @@ def build_fallback_brief(
 
 # ---- LLM Brief Generation ----
 
+BRIEF_PROMPT_SECTION_LIMIT = 12
+BRIEF_PROMPT_CHUNK_LIMIT = 8
+BRIEF_PROMPT_GIST_CHARS = 120
+BRIEF_PROMPT_CHUNK_CHARS = 420
+
 def build_llm_brief_prompt(title: str, sections: list[SectionSummary], chunks: list[dict]) -> str:
     section_lines = "\n".join(
-        f"- {s.section_id}: {s.title} (level={s.level}) gist={s.gist[:240]}"
-        for s in sections[:20]
+        f"- {s.section_id}: {s.title} (level={s.level}) gist={s.gist[:BRIEF_PROMPT_GIST_CHARS]}"
+        for s in sections[:BRIEF_PROMPT_SECTION_LIMIT]
     )
     chunk_lines = "\n\n".join(
-        f"[chunk {i + 1}] section={_chunk_section_id(chunk)}\n{_quote(chunk.get('text', ''), 700)}"
-        for i, chunk in enumerate(chunks[:16])
+        f"[chunk {i + 1}] section={_chunk_section_id(chunk)}\n{_quote(chunk.get('text', ''), BRIEF_PROMPT_CHUNK_CHARS)}"
+        for i, chunk in enumerate(chunks[:BRIEF_PROMPT_CHUNK_LIMIT])
     )
     return f"""You are generating a Paper Understanding Brief for Chinese university students.
 
@@ -225,6 +233,9 @@ def parse_llm_brief_json(doc_id: str, title: str, raw: str) -> PaperBriefRespons
         doc_id=doc_id,
         title=title,
         source="llm",
+        brief_type=data.get("brief_type", "paper"),
+        text_quality=data.get("text_quality", "good"),
+        ocr_needed=bool(data.get("ocr_needed", False)),
         tldr=data.get("tldr", []),
         problem=data.get("problem", ""),
         motivation=data.get("motivation", ""),
@@ -236,3 +247,155 @@ def parse_llm_brief_json(doc_id: str, title: str, raw: str) -> PaperBriefRespons
         limitations=data.get("limitations", []),
         generated_at=datetime.utcnow().isoformat(timespec="seconds") + "Z",
     )
+
+
+# ---- Lecture & Low-Text Brief Builders ----
+
+def build_low_text_brief(
+    doc_id: str,
+    title: str,
+    doc_type: str,
+    text_quality: str,
+    diagnostic_notes: list[str] | None = None,
+) -> PaperBriefResponse:
+    notes = diagnostic_notes or []
+    warning = "当前 PDF 文本抽取不足，系统不会基于少量文本生成高置信 Study Brief。"
+    if text_quality == "image_based":
+        warning = "当前 PDF 疑似图片型课件，文本抽取不足，无法可靠生成高质量 Study Brief。"
+    return PaperBriefResponse(
+        doc_id=doc_id,
+        title=title,
+        source="fallback",
+        brief_type="low_text",
+        text_quality=text_quality,
+        ocr_needed=True,
+        tldr=[
+            warning,
+            "建议启用 OCR 或 Vision Model 后重新解析，或上传可复制文字版本。",
+            "当前仅保留基础诊断信息，避免模型根据不完整文本编造内容。",
+        ],
+        problem="文本抽取不足，无法可靠识别本材料的主题、知识点和章节结构。",
+        motivation="对图片型课件或弱文本 PDF，先解决文本获取质量比直接生成摘要更重要。",
+        contributions=[],
+        method_walkthrough=[],
+        key_terms=[],
+        reading_focus=[],
+        review_questions=[
+            BriefReviewQuestion(
+                question="这个 PDF 是否可以选中文本或复制文字？",
+                level="basic",
+                expected_answer_hint="如果不能，通常需要 OCR 或 Vision Model。",
+            )
+        ],
+        limitations=notes + ["OCR 和 Vision 解析未在本阶段实现。"],
+        generated_at=datetime.utcnow().isoformat(timespec="seconds") + "Z",
+    )
+
+
+def build_lecture_fallback_brief(
+    doc_id: str,
+    title: str,
+    sections: list[SectionSummary],
+    chunks: list[dict],
+    text_quality: str = "good",
+    ocr_needed: bool = False,
+) -> PaperBriefResponse:
+    grouped = _chunks_by_section(chunks)
+    top_sections = [s for s in sections if s.level <= 2] or sections
+    all_text = "\n".join(chunk.get("text", "") for chunk in chunks[:8])
+    focus_sections = top_sections[:6]
+
+    tldr = [
+        f"本讲材料《{title}》包含 {len(sections)} 个结构节点和 {len(chunks)} 个文本片段。",
+        "建议先把握本讲主题、核心概念、例题或案例之间的关系。",
+        "复习时优先区分定义、公式适用条件和容易混淆的概念。",
+    ]
+    if focus_sections:
+        tldr.append(f'可从"{focus_sections[0].title}"开始建立知识点脉络。')
+
+    concept_cards = []
+    for section in focus_sections[:5]:
+        concept_cards.append(BriefContribution(
+            claim=f"知识点：{section.title}",
+            why_it_matters=section.gist or "该部分可能是本讲理解后续内容的基础。",
+            evidence=_evidence_for_section(section, grouped),
+        ))
+
+    learning_path = []
+    for index, section in enumerate(focus_sections[:5], start=1):
+        learning_path.append(BriefMethodStep(
+            title=f"复习步骤 {index}: {section.title}",
+            explanation=section.gist or f"先理解 {section.title} 的定义、例子和适用条件。",
+            evidence=_evidence_for_section(section, grouped),
+        ))
+
+    reading_focus = [
+        BriefReadingFocus(
+            section_id=section.section_id,
+            section_title=section.title,
+            reason="该部分适合作为复习提纲中的一个知识节点。",
+        )
+        for section in focus_sections
+    ]
+
+    return PaperBriefResponse(
+        doc_id=doc_id,
+        title=title,
+        source="fallback",
+        brief_type="lecture",
+        text_quality=text_quality,
+        ocr_needed=ocr_needed,
+        tldr=tldr[:5],
+        problem=_quote(all_text, 260) or "未能抽取足够文本，请优先检查课件是否为图片型 PDF。",
+        motivation="课件 Brief 的目标是帮助学生梳理概念、例子、公式和自测问题，而不是评价论文贡献。",
+        contributions=concept_cards,
+        method_walkthrough=learning_path,
+        key_terms=_extract_terms(all_text),
+        reading_focus=reading_focus,
+        review_questions=[
+            BriefReviewQuestion(question="本讲最核心的 3 个概念是什么？", level="basic", expected_answer_hint="从标题、定义页和反复出现的术语中提取。"),
+            BriefReviewQuestion(question="每个核心概念对应的例子是什么？", level="basic", expected_answer_hint="查找 Example、Case、Demo、Exercise 附近内容。"),
+            BriefReviewQuestion(question="哪些概念容易混淆？", level="deep", expected_answer_hint="比较定义、符号和适用条件。"),
+            BriefReviewQuestion(question="如果考试考这一讲，最可能考什么题型？", level="deep", expected_answer_hint="把公式、流程、对比点转成题目。"),
+            BriefReviewQuestion(question="本讲和上一讲或下一讲的关系是什么？", level="critical", expected_answer_hint="关注章节开头和结尾的衔接。"),
+        ],
+        limitations=["当前为 lecture fallback brief：基于可抽取文本和章节生成，未执行 OCR。"],
+        generated_at=datetime.utcnow().isoformat(timespec="seconds") + "Z",
+    )
+
+
+def build_lecture_llm_brief_prompt(title: str, sections: list[SectionSummary], chunks: list[dict]) -> str:
+    section_lines = "\n".join(
+        f"- {s.section_id}: {s.title} (level={s.level}) gist={s.gist[:BRIEF_PROMPT_GIST_CHARS]}"
+        for s in sections[:BRIEF_PROMPT_SECTION_LIMIT]
+    )
+    chunk_lines = "\n\n".join(
+        f"[chunk {i + 1}] section={_chunk_section_id(chunk)}\n{_quote(chunk.get('text', ''), BRIEF_PROMPT_CHUNK_CHARS)}"
+        for i, chunk in enumerate(chunks[:BRIEF_PROMPT_CHUNK_LIMIT])
+    )
+    return f"""You are generating a Lecture Study Brief for Chinese university students.
+
+Return ONLY valid JSON. No markdown fences.
+
+The JSON object must contain:
+- brief_type: "lecture"
+- tldr: 3-5 Chinese sentences
+- problem: string describing the lecture topic, not a research problem
+- motivation: string explaining why the topic matters for learning
+- core_concepts: array of 2-5 objects {{claim, why_it_matters, evidence?}} where claim is a core concept or knowledge point
+- method_walkthrough: array of 3-6 objects {{title, explanation, evidence?}} representing a learning path
+- key_terms: array of 5-10 objects {{term, explanation_zh, keep_english}}
+- reading_focus: array of 3-6 objects {{section_id, section_title, reason}}
+- review_questions: array of 5 objects {{question, level, expected_answer_hint}}
+- limitations: array of strings
+
+Preserve English model/method names and symbols. Do not invent content not supported by chunks.
+
+Title: {title}
+
+Sections:
+{section_lines}
+
+Representative chunks:
+{chunk_lines}
+"""

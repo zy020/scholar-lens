@@ -180,6 +180,9 @@ class PaperBriefResponse(BaseModel):
     doc_id: str
     title: str
     source: str = "fallback"  # fallback | llm | cached
+    brief_type: str = "paper"  # paper | lecture | low_text
+    text_quality: str = "unknown"
+    ocr_needed: bool = False
     tldr: list[str] = Field(default_factory=list)
     problem: str = ""
     motivation: str = ""
