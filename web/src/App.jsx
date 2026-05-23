@@ -28,8 +28,10 @@ export default function App() {
   const [activeSectionId, setActiveSectionId] = useState('')
   const [error, setError] = useState('')
   const [readerWidth, setReaderWidth] = useState(DEFAULT_READER_WIDTH)
+  const [isResizing, setIsResizing] = useState(false)
   const dragging = useRef(false)
   const mainRef = useRef(null)
+  const resizeCleanupRef = useRef(null)
 
   useEffect(() => {
     listDocuments().then(data => {
@@ -84,10 +86,29 @@ export default function App() {
     }).catch(() => {})
   }, [active])
 
+  const stopResize = useCallback(() => {
+    dragging.current = false
+    setIsResizing(false)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+    resizeCleanupRef.current?.()
+    resizeCleanupRef.current = null
+  }, [])
+
+  useEffect(() => () => {
+    resizeCleanupRef.current?.()
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+  }, [])
+
   // Resize
-  const handleMouseDown = useCallback((e) => {
+  const handleResizePointerDown = useCallback((e) => {
     e.preventDefault()
+    e.currentTarget.setPointerCapture?.(e.pointerId)
     dragging.current = true
+    setIsResizing(true)
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
     const startX = e.clientX
     const startWidth = readerWidth
     const onMove = (ev) => {
@@ -98,14 +119,22 @@ export default function App() {
       const next = Math.min(maxReader, Math.max(MIN_READER_WIDTH, startWidth + delta))
       setReaderWidth(next)
     }
-    const onUp = () => {
-      dragging.current = false
-      document.removeEventListener('mousemove', onMove)
-      document.removeEventListener('mouseup', onUp)
+    const onEnd = () => {
+      stopResize()
     }
-    document.addEventListener('mousemove', onMove)
-    document.addEventListener('mouseup', onUp)
-  }, [readerWidth])
+    const cleanup = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onEnd)
+      window.removeEventListener('pointercancel', onEnd)
+      window.removeEventListener('blur', onEnd)
+    }
+    resizeCleanupRef.current?.()
+    resizeCleanupRef.current = cleanup
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onEnd)
+    window.addEventListener('pointercancel', onEnd)
+    window.addEventListener('blur', onEnd)
+  }, [readerWidth, stopResize])
 
   const activeDoc = docs.find(d => d.doc_id === active) || {}
   const visibleSections = active ? sections : []
@@ -121,11 +150,11 @@ export default function App() {
         {!hasDoc ? (
           <div className="empty-state">请先上传文档</div>
         ) : (
-          <div className="reader-workspace">
+          <div className={`reader-workspace ${isResizing ? 'resizing' : ''}`}>
             <div className="reader-pane" style={{ width: readerWidth, minWidth: readerWidth }}>
-              <ReaderPanel doc={activeDoc} activeSectionId={visibleSectionId} sections={visibleSections} />
+              <ReaderPanel doc={activeDoc} />
             </div>
-            <div className="resize-handle" onMouseDown={handleMouseDown}>
+            <div className="resize-handle" onPointerDown={handleResizePointerDown}>
               <div className="resize-handle-line" />
             </div>
             <div className="workspace-pane">
@@ -138,15 +167,15 @@ export default function App() {
               </nav>
               <div className="panel">
                 <div className={`tab-panel ${tab === 'chat' ? 'active' : ''}`} hidden={tab !== 'chat'}>
-                  <ChatPanel doc={activeDoc} activeSectionId={visibleSectionId} sections={visibleSections}
+                  <ChatPanel key={activeDoc.doc_id} doc={activeDoc} activeSectionId={visibleSectionId} sections={visibleSections}
                              sectionTitle={visibleSections.find(s => s.section_id === visibleSectionId)?.title || ''} />
                 </div>
                 <div className={`tab-panel ${tab === 'translate' ? 'active' : ''}`} hidden={tab !== 'translate'}>
-                  <TranslatePanel doc={activeDoc} sections={visibleSections} activeSectionId={visibleSectionId}
+                  <TranslatePanel key={activeDoc.doc_id} doc={activeDoc} sections={visibleSections} activeSectionId={visibleSectionId}
                                   onSelectSection={(s) => setActiveSectionId(s.section_id)} />
                 </div>
                 <div className={`tab-panel ${tab === 'study' ? 'active' : ''}`} hidden={tab !== 'study'}>
-                  <NotesPanel doc={activeDoc} docId={active} />
+                  <NotesPanel key={activeDoc.doc_id || 'empty'} doc={activeDoc} docId={active} />
                 </div>
                 <div className={`tab-panel ${tab === 'config' ? 'active' : ''}`} hidden={tab !== 'config'}>
                   <ConfigPanel />
