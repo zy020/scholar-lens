@@ -79,6 +79,31 @@ def test_brief_endpoint_404_for_missing_doc(brief_client):
     assert r.status_code == 404
 
 
+from scholar_lens.api.brief_builder import parse_llm_brief_json
+
+
+def test_parse_llm_brief_json_normalizes_required_fields():
+    raw = """
+    {
+      "tldr": ["问题是长文本建模成本高。", "方法是稀疏 attention。", "实验展示吞吐提升。"],
+      "problem": "长文本 self-attention 成本高。",
+      "motivation": "降低计算成本。",
+      "contributions": [{"claim": "提出稀疏 attention block", "why_it_matters": "降低复杂度"}],
+      "method_walkthrough": [{"title": "Sparse block", "explanation": "减少注意力连接。"}],
+      "key_terms": [{"term": "self-attention", "explanation_zh": "自注意力机制"}],
+      "reading_focus": [{"section_id": "method", "section_title": "Method", "reason": "理解方法"}],
+      "review_questions": [{"question": "方法核心是什么？", "level": "basic"}],
+      "limitations": ["未验证超长文本。"]
+    }
+    """
+
+    brief = parse_llm_brief_json("doc1", "paper.pdf", raw)
+
+    assert brief.source == "llm"
+    assert brief.contributions[0].claim == "提出稀疏 attention block"
+    assert brief.key_terms[0].term == "self-attention"
+
+
 def test_fallback_brief_preserves_english_terms():
     sections = [SectionSummary(section_id="m", title="Method", level=1, gist="Transformer attention.")]
     chunks = [

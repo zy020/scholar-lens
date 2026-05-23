@@ -66,6 +66,31 @@ async def get_paper_brief(doc_id: str, force: bool = Query(False)):
 
     sections = _store.load_sections(doc_id)
     chunks = _store.load_chunks(doc_id)
+
+    from scholar_lens.api.brief_builder import build_llm_brief_prompt, parse_llm_brief_json
+    from scholar_lens.api.deps import get_settings
+
+    settings = get_settings()
+    if settings.llm.api_key and settings.llm.model:
+        try:
+            from langchain_core.messages import HumanMessage, SystemMessage
+            from scholar_lens.core.llm_factory import ChatLLMFactory
+
+            llm = ChatLLMFactory.from_settings(settings).create(streaming=False)
+            prompt = build_llm_brief_prompt(doc.name, sections, chunks)
+            response = await llm.ainvoke([
+                SystemMessage(content="You produce strict JSON for academic paper understanding briefs."),
+                HumanMessage(content=prompt),
+            ])
+            brief = parse_llm_brief_json(doc_id, doc.name, response.content)
+            _save_cached_brief(doc_id, brief)
+            return brief
+        except Exception as exc:
+            brief = build_fallback_brief(doc_id, doc.name, sections, chunks)
+            brief.error = f"LLM brief failed; fallback used: {exc}"
+            _save_cached_brief(doc_id, brief)
+            return brief
+
     brief = build_fallback_brief(doc_id, doc.name, sections, chunks)
     _save_cached_brief(doc_id, brief)
     return brief

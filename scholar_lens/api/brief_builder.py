@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime
 
@@ -162,5 +163,76 @@ def build_fallback_brief(
         reading_focus=reading_focus,
         review_questions=review_questions,
         limitations=["当前为 fallback brief：基于章节和文本片段生成，未调用 LLM 深度归纳。"],
+        generated_at=datetime.utcnow().isoformat(timespec="seconds") + "Z",
+    )
+
+
+# ---- LLM Brief Generation ----
+
+def build_llm_brief_prompt(title: str, sections: list[SectionSummary], chunks: list[dict]) -> str:
+    section_lines = "\n".join(
+        f"- {s.section_id}: {s.title} (level={s.level}) gist={s.gist[:240]}"
+        for s in sections[:20]
+    )
+    chunk_lines = "\n\n".join(
+        f"[chunk {i + 1}] section={_chunk_section_id(chunk)}\n{_quote(chunk.get('text', ''), 700)}"
+        for i, chunk in enumerate(chunks[:16])
+    )
+    return f"""You are generating a Paper Understanding Brief for Chinese university students.
+
+Return ONLY valid JSON. No markdown fences.
+
+The JSON object must contain:
+- tldr: 3-5 Chinese sentences
+- problem: string
+- motivation: string
+- contributions: array of 2-4 objects {{claim, why_it_matters, evidence?}}
+- method_walkthrough: array of 3-6 objects {{title, explanation, evidence?}}
+- key_terms: array of 5-10 objects {{term, explanation_zh, keep_english}}
+- reading_focus: array of 3-6 objects {{section_id, section_title, reason}}
+- review_questions: array of 5 objects {{question, level, expected_answer_hint}}
+- limitations: array of strings
+
+Evidence objects must use actual section ids/titles from the section list and short quotes from chunks.
+Preserve English model/method names such as Transformer, self-attention, RAG, BERT, GPT, LoRA.
+
+Title: {title}
+
+Sections:
+{section_lines}
+
+Representative chunks:
+{chunk_lines}
+"""
+
+
+def _extract_json_object(raw: str) -> dict:
+    text = raw.strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text.startswith("json"):
+            text = text[4:].strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end < start:
+        raise ValueError("LLM response did not contain a JSON object")
+    return json.loads(text[start:end + 1])
+
+
+def parse_llm_brief_json(doc_id: str, title: str, raw: str) -> PaperBriefResponse:
+    data = _extract_json_object(raw)
+    return PaperBriefResponse(
+        doc_id=doc_id,
+        title=title,
+        source="llm",
+        tldr=data.get("tldr", []),
+        problem=data.get("problem", ""),
+        motivation=data.get("motivation", ""),
+        contributions=data.get("contributions", []),
+        method_walkthrough=data.get("method_walkthrough", []),
+        key_terms=data.get("key_terms", []),
+        reading_focus=data.get("reading_focus", []),
+        review_questions=data.get("review_questions", []),
+        limitations=data.get("limitations", []),
         generated_at=datetime.utcnow().isoformat(timespec="seconds") + "Z",
     )
