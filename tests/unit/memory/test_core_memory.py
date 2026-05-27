@@ -14,7 +14,7 @@ class TestCoreMemory:
         cm = CoreMemory(
             student_profile="Intermediate CS student, strong in math, weak in NLP",
             current_position="paper_001:3.1",
-            active_glossary=["self-attention:自注意力", "positional encoding:位置编码"],
+            active_glossary=["self-attention|||自注意力", "positional encoding|||位置编码"],
             session_summary="Reading Transformer paper, discussed attention mechanism.",
         )
         assert "Intermediate" in cm.student_profile
@@ -24,13 +24,13 @@ class TestCoreMemory:
         cm = CoreMemory(
             student_profile="Intermediate student",
             current_position="paper_001:3.1",
-            active_glossary=["attention:注意力"],
+            active_glossary=["attention|||注意力"],
             session_summary="Discussing attention.",
         )
         context = cm.to_context_string()
         assert "Intermediate student" in context
         assert "paper_001:3.1" in context
-        assert "attention:注意力" in context
+        assert "attention|||注意力" in context
 
     def test_token_estimate(self):
         cm = CoreMemory(
@@ -58,4 +58,4 @@ class TestCoreMemory:
         cm.add_glossary_entry("attention", "注意力")
         cm.add_glossary_entry("attention", "关注")
         assert len(cm.active_glossary) == 1
-        assert "attention:关注" in cm.active_glossary[0]
+        assert "attention|||关注" in cm.active_glossary[0]

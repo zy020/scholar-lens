@@ -92,7 +92,7 @@ export default function SectionsPanel({
             {!s.isParent && <span className="section-toggle-spacer" />}
             <span className="section-number">{s.displayNumber || `§${s.index + 1}`}</span>
             <span className="section-title-text">{s.title}</span>
-            {s.page_start != null && <span className="section-page">p{s.page_start}</span>}
+            {s.page_start != null && <span className="section-page">第 {Number(s.page_start) + 1} 页</span>}
           </button>
         ))}
       </div>

@@ -9,11 +9,14 @@ class ParsedPage(BaseModel):
     char_count: int = 0
     is_two_column: bool = False
     has_abstract: bool = False
+    content_source: str = "parser"
+    enhanced: bool = False
 
 
 class ParsedDocument(BaseModel):
     source_path: str
-    doc_subtype: str  # research_paper | slides_pdf | courseware_pptx | general_document
+    parser_used: str = ""  # pymupdf | pdfplumber | python-pptx
+    doc_subtype: str  # research_paper | slides_pdf | courseware_pptx
     pages: list[ParsedPage] = Field(default_factory=list)
     sections: list[dict] = Field(default_factory=list)
     raw_text: str = ""
@@ -25,6 +28,8 @@ class ParsedDocument(BaseModel):
 class ChunkMetadata(BaseModel):
     section_id: str
     section_type: str = "prose"
+    page_start: int | None = None
+    page_end: int | None = None
     chapter: str = ""
     difficulty_score: float = 0.5
     has_formula: bool = False
@@ -35,6 +40,8 @@ class ChunkMetadata(BaseModel):
     referenced_by: list[str] = Field(default_factory=list)
     doc_id: str = ""
     contextual_prefix: str = ""
+    content_source: str = "parser"
+    enhanced: bool = False
 
 
 class Chunk(BaseModel):

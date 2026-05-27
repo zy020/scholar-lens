@@ -24,9 +24,12 @@ class DocumentSummary(BaseModel):
     doc_type: str = "unknown"
     text_quality: str = "unknown"
     ocr_needed: bool = False
+    ocr_recommended_pages: list[int] = Field(default_factory=list)
+    ocr_recommendation_reasons: dict[str, str] = Field(default_factory=dict)
     page_text_coverage: float = 0.0
     section_quality: str = "unknown"
     diagnostic_notes: list[str] = Field(default_factory=list)
+    index_status: str = "not_indexed"  # not_indexed | vector | keyword_only | failed
     file_url: str = ""
     num_sections: int = 0
     num_chunks: int = 0
@@ -60,44 +63,137 @@ class EvidenceItem(BaseModel):
 
 class ConfigUpdateRequest(BaseModel):
     # UI-friendly aliases; backend normalizes them to the nested LLM config.
-    api_key: str = ""
-    base_url: str = ""
-    llm_api_key: str = ""
-    llm_base_url: str = "https://api.openai.com/v1"
-    llm_model: str = "gpt-4o-mini"
-    llm_temperature: float = 0.3
-    llm_use_separate: bool = False
-    embedding_api_key: str = ""
-    embedding_base_url: str = "https://api.openai.com/v1"
-    embedding_model: str = "text-embedding-3-small"
-    embedding_use_separate: bool = False
-    reranker_api_key: str = ""
-    reranker_base_url: str = ""
+    api_key: str | None = None
+    base_url: str | None = None
+    llm_api_key: str | None = None
+    llm_base_url: str | None = None
+    llm_model: str | None = None
+    llm_temperature: float | None = None
+    llm_use_separate: bool | None = None
+    embedding_api_key: str | None = None
+    embedding_base_url: str | None = None
+    embedding_model: str | None = None
+    embedding_use_separate: bool | None = None
+    reranker_api_key: str | None = None
+    reranker_base_url: str | None = None
     reranker_model: str | None = None
-    reranker_enabled: bool = True
-    reranker_use_separate: bool = False
-    vision_api_key: str = ""
-    vision_base_url: str = ""
-    vision_model: str = ""
-    vision_enabled: bool = True
-    vision_use_separate: bool = False
+    reranker_enabled: bool | None = None
+    reranker_use_separate: bool | None = None
+    vision_api_key: str | None = None
+    vision_base_url: str | None = None
+    vision_model: str | None = None
+    vision_enabled: bool | None = None
+    vision_use_separate: bool | None = None
+    llm_quality_enabled: bool | None = None
+    vision_enhancement_enabled: bool | None = None
+    memory_llm_compression_enabled: bool | None = None
 
 
 class ConfigResponse(BaseModel):
     llm_model: str
+    llm_base_url: str = ""
+    llm_configured: bool = False
     embedding_model: str
+    embedding_base_url: str = ""
+    embedding_configured: bool = False
     reranker_available: bool = False
+    reranker_model: str = ""
+    reranker_base_url: str = ""
+    reranker_active: bool = False
+    reranker_mode: str = "rule"
+    reranker_use_separate: bool = False
     vision_available: bool = False
+    vision_model: str = ""
+    vision_base_url: str = ""
+    vision_use_separate: bool = False
+    auto_ocr_enabled: bool = True
+    llm_quality_enabled: bool = False
+    vision_enhancement_enabled: bool = False
+    memory_llm_compression_enabled: bool = False
     status: str = "configured"
     requires_restart: bool = False
 
 
-class DocumentUploadResponse(BaseModel):
+class DocumentAnalysisResponse(BaseModel):
     doc_id: str
-    doc_type: str
-    num_sections: int
-    num_terms: int = 0
-    status: str  # "processing" | "processed" | "error"
+    status: str
+    source: str = "unavailable"
+    error: str = ""
+
+
+class DocumentAnalysisDetailResponse(BaseModel):
+    doc_id: str
+    status: str = "missing"
+    source: str = "missing"
+    updated_at: str = ""
+    error: str = ""
+    difficulty: str = ""
+    estimated_reading_time: int = 0
+    key_terms: list[dict] = Field(default_factory=list)
+    l0_summaries: dict[str, str] = Field(default_factory=dict)
+    l1_overviews: dict[str, str] = Field(default_factory=dict)
+    mermaid_map: str = ""
+    parse_quality_status: str = ""
+    parse_quality_message: str = ""
+    parse_quality_warnings: list[str] = Field(default_factory=list)
+    parse_quality_actions: list[str] = Field(default_factory=list)
+    parse_quality_pages: list[dict] = Field(default_factory=list)
+
+
+class EnhancePlanResponse(BaseModel):
+    doc_id: str
+    status: str = "skipped"
+    recommended_ocr_pages: list[int] = Field(default_factory=list)
+    ocr_recommendation_reasons: dict[str, str] = Field(default_factory=dict)
+    estimated_ocr_pages: int = 0
+    ocr_engine: str = "rapidocr"
+    ocr_installed: bool = False
+    ocr_gpu_available: bool = False
+    ocr_cpu_available: bool = False
+    ocr_recommended_mode: str = "unavailable"
+    available_actions: list[str] = Field(default_factory=list)
+    vision_available: bool = False
+    vision_enhancement_enabled: bool = False
+    vision_possible: bool = False
+    vision_escalation_reasons: list[str] = Field(default_factory=list)
+    message: str = ""
+
+
+class OCREnhanceResponse(BaseModel):
+    doc_id: str
+    status: str = "skipped"
+    engine: str = "rapidocr"
+    pages: list[dict] = Field(default_factory=list)
+    vision_recommended_pages: list[int] = Field(default_factory=list)
+    message: str = ""
+    error: str = ""
+
+
+class VisionEnhanceResponse(BaseModel):
+    doc_id: str
+    status: str = "skipped"
+    engine: str = "vision"
+    pages: list[dict] = Field(default_factory=list)
+    message: str = ""
+    error: str = ""
+
+
+class EnhancementApplyResponse(BaseModel):
+    doc_id: str
+    status: str = "missing"
+    source: str = "ocr"
+    num_pages_updated: int = 0
+    num_chunks: int = 0
+    message: str = ""
+    error: str = ""
+
+
+class ParseQualityResponse(BaseModel):
+    doc_id: str
+    source: str = "heuristic"
+    status: str = "available"
+    qualities: list[dict] = Field(default_factory=list)
+    message: str = ""
     error: str = ""
 
 
@@ -113,12 +209,19 @@ class ChatRequest(BaseModel):
     doc_id: str = ""
     section_id: str = ""
     mode: str = "chat"  # chat | explain | translate | socratic | review
+    top_k: int = Field(default=5, ge=1, le=20)
+    context_k: int | None = Field(default=None, ge=1, le=40)
+    section_only: bool = False
+    use_reranker: bool = True
+    student_level: str = "intermediate"
+    deep_mode: bool = False
 
 
 class ChatMessage(BaseModel):
     role: str  # user | assistant | system
     content: str
     timestamp: str = ""
+    evidence: list[dict] = Field(default_factory=list)
 
 
 class ExplanationResponse(BaseModel):
@@ -179,8 +282,8 @@ class BriefReviewQuestion(BaseModel):
 class PaperBriefResponse(BaseModel):
     doc_id: str
     title: str
-    source: str = "fallback"  # fallback | llm | cached
-    brief_type: str = "paper"  # paper | lecture | low_text
+    source: str = "not_generated"  # not_generated | llm | cached | unavailable
+    brief_type: str = "paper"  # paper | lecture
     text_quality: str = "unknown"
     ocr_needed: bool = False
     tldr: list[str] = Field(default_factory=list)

@@ -6,6 +6,7 @@ import {
   getCitedEvidenceView,
   getEvidenceCardId,
   getEvidenceToggleLabel,
+  getOriginalIndexForDisplayCitation,
   normalizeCitationText,
 } from './chatEvidence.js'
 
@@ -55,6 +56,17 @@ test('answer citation text is normalized to sequential labels', () => {
     normalizeCitationText('Uses [3] first, then [1].', [2, 0]),
     'Uses [1] first, then [2].',
   )
+})
+
+test('display citation maps back to original evidence index', () => {
+  const citedEvidence = [
+    { displayIndex: 1, originalIndex: 2 },
+    { displayIndex: 2, originalIndex: 0 },
+  ]
+
+  assert.equal(getOriginalIndexForDisplayCitation(1, citedEvidence), 2)
+  assert.equal(getOriginalIndexForDisplayCitation(2, citedEvidence), 0)
+  assert.equal(getOriginalIndexForDisplayCitation(3, citedEvidence), null)
 })
 
 test('evidence card ids include message and original evidence indexes', () => {

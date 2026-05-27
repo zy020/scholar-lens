@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 from scholar_lens.parsers.models import ParsedDocument, ParsedPage
@@ -8,11 +9,15 @@ from scholar_lens.parsers.models import ParsedDocument, ParsedPage
 logger = logging.getLogger(__name__)
 
 _SLIDES_PDF_MAX_CHARS = 300
+_FORMULA_PATTERN = re.compile(
+    r"(?:softmax|LayerNorm|sqrt|frac|sum|prod|argmax|argmin|\\[a-zA-Z]+|[A-Za-z]\s*[\^_=]\s*[A-Za-z0-9({])",
+    re.IGNORECASE,
+)
 
 
 def detect_pdf_subtype(pages: list[ParsedPage]) -> str:
     if not pages:
-        return "general_document"
+        return "research_paper"
     avg_chars = sum(p.char_count for p in pages) / len(pages)
     has_two_column = any(p.is_two_column for p in pages)
     has_abstract = any(p.has_abstract for p in pages)
@@ -20,7 +25,7 @@ def detect_pdf_subtype(pages: list[ParsedPage]) -> str:
         return "slides_pdf"
     if has_abstract or has_two_column:
         return "research_paper"
-    return "general_document"
+    return "research_paper"
 
 
 def diagnose_text_quality(
@@ -80,74 +85,23 @@ def diagnose_text_quality(
 
 
 class PDFParser:
-    """Parses PDF documents using Docling with fallback chain."""
+    """Parses PDF documents with local text extractors."""
 
-    def __init__(self, use_docling: bool | str = "auto", page_limit: int = 200) -> None:
-        self._use_docling = use_docling  # True/False/"auto"
+    def __init__(self, page_limit: int = 200) -> None:
         self._page_limit = page_limit
-
-    @staticmethod
-    def _docling_model_available() -> bool:
-        """Check if Docling model is cached locally (avoids download timeout)."""
-        from pathlib import Path as _Path
-        cache_dir = _Path.home() / ".cache" / "huggingface" / "hub"
-        model_dir = cache_dir / "models--docling-project--docling-layout-heron"
-        if not model_dir.exists():
-            return False
-        snapshots = model_dir / "snapshots"
-        if not snapshots.exists():
-            return False
-        for snap in snapshots.iterdir():
-            if snap.is_dir():
-                model_file = snap / "model.safetensors"
-                if model_file.exists() and model_file.stat().st_size > 1024:
-                    return True
-        return False
-
-    @staticmethod
-    def _docling_gpu_ok() -> bool:
-        """Pre-flight check: can ONNX run GPU inference without bus error?"""
-        try:
-            import onnxruntime as ort
-            if 'CUDAExecutionProvider' not in ort.get_available_providers():
-                return False
-            # Test GPU inference with a minimal session
-            import numpy as np
-            opts = ort.SessionOptions()
-            opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
-            # Create a tiny test to verify CUDA works
-            test = np.array([1.0], dtype=np.float32)
-            return True
-        except Exception:
-            return False
 
     def parse(self, pdf_path: str | Path) -> ParsedDocument:
         pdf_path = Path(pdf_path)
         if not pdf_path.exists():
             raise FileNotFoundError(f"PDF not found: {pdf_path}")
 
-        # P2.4: large file OOM protection
         file_size_mb = pdf_path.stat().st_size / 1024 / 1024
         if self._page_limit and file_size_mb > 100:
             logger.warning(
-                "Large file (%.0f MB), using PyMuPDF fallback to avoid Docling OOM",
+                "Large file (%.0f MB), using PyMuPDF text extraction",
                 file_size_mb,
             )
             return self._parse_with_pymupdf(pdf_path)
-
-        should_use_docling = (
-            self._use_docling is True
-            or (self._use_docling == "auto"
-                and self._docling_model_available()
-                and self._docling_gpu_ok())
-        )
-        if should_use_docling:
-            try:
-                return self._parse_with_docling(pdf_path)
-            except ImportError:
-                logger.warning("docling not installed, trying fallback parsers")
-            except Exception as e:
-                logger.warning(f"Docling parsing failed: {e}, trying fallback")
 
         try:
             return self._parse_with_pymupdf(pdf_path)
@@ -158,91 +112,20 @@ class PDFParser:
 
         return self._parse_with_pdfplumber(pdf_path)
 
-    def _parse_with_docling(self, pdf_path: Path) -> ParsedDocument:
-        # RapidOCR PP-OCRv4 models crash on CUDA with older drivers.
-        # Disable OCR for now — only affects scanned PDFs. Layout model still uses GPU.
-        from docling.datamodel.base_models import InputFormat, DocItemLabel
-        from docling.datamodel.pipeline_options import PdfPipelineOptions
-        from docling.document_converter import DocumentConverter, PdfFormatOption
-
-        pipeline_opts = PdfPipelineOptions()
-        pipeline_opts.do_ocr = False  # RapidOCR PP-OCRv4 models are CPU-only; text PDFs don't need OCR
-        pipeline_opts.do_formula_enrichment = False
-
-        converter = DocumentConverter(
-            format_options={
-                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_opts),
-            },
-        )
-        result = converter.convert(str(pdf_path))
-        doc = result.document
-
-        pages = []
-        for i, page in enumerate(doc.pages.values()):
-            text = page.text if hasattr(page, "text") else ""
-            pages.append(ParsedPage(page_num=i, text=text, char_count=len(text)))
-
-        # Extract section hierarchy from Docling labels
-        sections = []
-        section_stack: list[dict] = []  # track parent sections for hierarchy
-        section_counter: dict[int, int] = {}  # level → counter
-
-        if hasattr(doc, "texts"):
-            for item in doc.texts:
-                label = getattr(item, "label", None)
-                if label not in (DocItemLabel.SECTION_HEADER, DocItemLabel.TITLE):
-                    continue
-
-                title = item.text.strip() if hasattr(item, "text") else ""
-                if not title:
-                    continue
-
-                # Try to extract numeric section ID (e.g., "3.1" from "3.1 Pre-training BERT")
-                import re
-                sec_match = re.match(r"^([\d.]+)\s", title)
-                sec_id = sec_match.group(1) if sec_match else title[:30]
-
-                level = 1
-                if sec_match:
-                    level = sec_match.group(1).count(".") + 1
-
-                # Handle both regular heading and section_header labels
-                heading_level = getattr(item, "level", level) or level
-
-                # Track chapter from top-level sections
-                chapter = sec_id.split(".")[0] if "." in sec_id else sec_id
-
-                sections.append({
-                    "id": sec_id,
-                    "title": title,
-                    "level": heading_level,
-                    "chapter": chapter,
-                    "text": item.text if hasattr(item, "text") else "",
-                    "page_start": getattr(item, "prov", [None])[0].page_no if hasattr(item, "prov") and item.prov else None,
-                })
-
-        raw_text = doc.export_to_markdown() if hasattr(doc, "export_to_markdown") else "\n".join(p.text for p in pages)
-
-        # Detect abstract from first page (for subtype detection)
-        has_abstract = any("abstract" in (s.get("title", "")).lower() for s in sections[:3])
-
-        return ParsedDocument(
-            source_path=str(pdf_path),
-            parser_used="docling",
-            doc_subtype=detect_pdf_subtype(pages),
-            pages=pages,
-            sections=sections,
-            raw_text=raw_text,
-        )
-
     def _parse_with_pymupdf(self, pdf_path: Path) -> ParsedDocument:
         import fitz
 
         doc = fitz.open(str(pdf_path))
         pages = []
+        images: list[dict] = []
+        tables: list[dict] = []
+        formulas: list[dict] = []
         for i, page in enumerate(doc):
             text = page.get_text()
             pages.append(ParsedPage(page_num=i, text=text, char_count=len(text)))
+            images.extend(_extract_page_images(page, i))
+            tables.extend(_extract_page_tables(page, i))
+            formulas.extend(_extract_formula_candidates(text, i))
 
         raw_text = "\n".join(p.text for p in pages)
 
@@ -256,6 +139,9 @@ class PDFParser:
             pages=pages,
             sections=sections,
             raw_text=raw_text,
+            formulas=formulas,
+            tables=tables,
+            images=images,
         )
 
     @staticmethod
@@ -269,7 +155,7 @@ class PDFParser:
                     "id": str(i + 1),
                     "title": str(item[1]),
                     "level": item[0],
-                    "page_start": item[2],
+                    "page_start": max(int(item[2]) - 1, 0),
                 })
         return sections
 
@@ -277,10 +163,24 @@ class PDFParser:
         import pdfplumber
 
         pages = []
+        tables: list[dict] = []
+        formulas: list[dict] = []
         with pdfplumber.open(str(pdf_path)) as pdf:
             for i, page in enumerate(pdf.pages):
                 text = page.extract_text() or ""
                 pages.append(ParsedPage(page_num=i, text=text, char_count=len(text)))
+                formulas.extend(_extract_formula_candidates(text, i))
+                try:
+                    extracted_tables = page.extract_tables() or []
+                except Exception:
+                    extracted_tables = []
+                for table_idx, table in enumerate(extracted_tables):
+                    tables.append({
+                        "page": i,
+                        "table_index": table_idx,
+                        "rows": len(table or []),
+                        "source": "pdfplumber",
+                    })
 
         raw_text = "\n".join(p.text for p in pages)
         return ParsedDocument(
@@ -288,5 +188,79 @@ class PDFParser:
             parser_used="pdfplumber",
             doc_subtype=detect_pdf_subtype(pages),
             pages=pages,
+            tables=tables,
+            formulas=formulas,
             raw_text=raw_text,
         )
+
+
+def _extract_page_images(page, page_num: int) -> list[dict]:
+    page_area = max(float(page.rect.width * page.rect.height), 1.0)
+    images = []
+    seen: set[tuple[float, float, float, float]] = set()
+    for block in page.get_text("dict").get("blocks", []):
+        if block.get("type") != 1:
+            continue
+        bbox = tuple(round(float(value), 2) for value in block.get("bbox", []))
+        if len(bbox) != 4 or bbox in seen:
+            continue
+        seen.add(bbox)
+        area = max((bbox[2] - bbox[0]) * (bbox[3] - bbox[1]), 0.0)
+        images.append({
+            "page": page_num,
+            "bbox": list(bbox),
+            "area_ratio": round(area / page_area, 4),
+            "source": "pymupdf",
+        })
+    if images:
+        return images
+
+    try:
+        image_refs = page.get_images(full=True)
+    except Exception:
+        image_refs = []
+    return [
+        {
+            "page": page_num,
+            "image_index": idx,
+            "source": "pymupdf",
+        }
+        for idx, _image in enumerate(image_refs)
+    ]
+
+
+def _extract_page_tables(page, page_num: int) -> list[dict]:
+    if not hasattr(page, "find_tables"):
+        return []
+    try:
+        found = page.find_tables()
+    except Exception:
+        return []
+    tables = getattr(found, "tables", []) or []
+    result = []
+    for idx, table in enumerate(tables):
+        bbox = getattr(table, "bbox", None)
+        item = {
+            "page": page_num,
+            "table_index": idx,
+            "source": "pymupdf",
+        }
+        if bbox:
+            item["bbox"] = [round(float(value), 2) for value in bbox]
+        result.append(item)
+    return result
+
+
+def _extract_formula_candidates(text: str, page_num: int) -> list[dict]:
+    candidates = []
+    for line in text.splitlines():
+        normalized = line.strip()
+        if len(normalized) < 4:
+            continue
+        if _FORMULA_PATTERN.search(normalized):
+            candidates.append({
+                "page": page_num,
+                "text": normalized[:300],
+                "source": "text_heuristic",
+            })
+    return candidates

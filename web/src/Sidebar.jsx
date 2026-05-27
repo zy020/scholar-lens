@@ -12,10 +12,16 @@ export default function Sidebar({ docs, active, setActive, onUpload, onDelete, u
     <aside className="sidebar">
       <div className="logo">ScholarLens</div>
 
-      <label className="upload-btn">
-        {uploading ? '上传中...' : '上传 PDF'}
-        <input type="file" accept=".pdf" multiple onChange={onUpload} hidden />
-      </label>
+      <div className="upload-group">
+        <label className="upload-btn">
+          {uploading ? '上传中...' : '上传论文 PDF'}
+          <input type="file" accept=".pdf" multiple onChange={(e) => onUpload(e, 'paper')} hidden />
+        </label>
+        <label className="upload-btn">
+          {uploading ? '上传中...' : '上传课件 PDF/PPTX'}
+          <input type="file" accept=".pdf,.pptx" multiple onChange={(e) => onUpload(e, 'courseware')} hidden />
+        </label>
+      </div>
 
       <div className="doc-list">
         <h3>文档列表</h3>

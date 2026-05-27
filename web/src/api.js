@@ -25,11 +25,19 @@ export async function listDocuments() {
   return handleError(res).then(r => r.json())
 }
 
-export async function uploadDocument(file) {
+async function uploadToEndpoint(file, endpoint) {
   const form = new FormData()
   form.append('file', file)
-  const res = await fetch(`${BASE}/documents/upload`, { method: 'POST', body: form })
+  const res = await fetch(`${BASE}${endpoint}`, { method: 'POST', body: form })
   return handleError(res).then(r => r.json())
+}
+
+export async function uploadPaperDocument(file) {
+  return uploadToEndpoint(file, '/documents/upload/paper')
+}
+
+export async function uploadCoursewareDocument(file) {
+  return uploadToEndpoint(file, '/documents/upload/courseware')
 }
 
 export async function getDocument(docId) {
@@ -52,6 +60,37 @@ export async function getSectionText(docId, sectionId) {
   return handleError(res).then(r => r.json())
 }
 
+export async function analyzeDocument(docId) {
+  const res = await fetch(`${BASE}/documents/${docId}/analyze`, { method: 'POST' })
+  return handleError(res).then(r => r.json())
+}
+
+export async function getDocumentAnalysis(docId) {
+  const res = await fetch(`${BASE}/documents/${docId}/analysis`)
+  return handleError(res).then(r => r.json())
+}
+
+export async function getEnhancePlan(docId) {
+  const res = await fetch(`${BASE}/documents/${docId}/enhance-plan`, { method: 'POST' })
+  return handleError(res).then(r => r.json())
+}
+
+export async function enhanceOcr(docId, mode = 'auto') {
+  const suffix = mode ? `?mode=${encodeURIComponent(mode)}` : ''
+  const res = await fetch(`${BASE}/documents/${docId}/enhance/ocr${suffix}`, { method: 'POST' })
+  return handleError(res).then(r => r.json())
+}
+
+export async function enhanceVision(docId) {
+  const res = await fetch(`${BASE}/documents/${docId}/enhance/vision`, { method: 'POST' })
+  return handleError(res).then(r => r.json())
+}
+
+export async function applyEnhancement(docId) {
+  const res = await fetch(`${BASE}/documents/${docId}/enhance/apply`, { method: 'POST' })
+  return handleError(res).then(r => r.json())
+}
+
 export async function getStudyBrief(docId, force = false) {
   const suffix = force ? '?force=true' : ''
   const res = await fetch(`${BASE}/notes/${docId}/brief${suffix}`)
@@ -60,6 +99,27 @@ export async function getStudyBrief(docId, force = false) {
 
 export async function getNotes(docId) {
   const res = await fetch(`${BASE}/notes/${docId}`)
+  return handleError(res).then(r => r.json())
+}
+
+export async function getMemorySnapshot(docId = '') {
+  const suffix = docId ? `?doc_id=${encodeURIComponent(docId)}` : ''
+  const res = await fetch(`${BASE}/memory${suffix}`)
+  return handleError(res).then(r => r.json())
+}
+
+export async function clearSessionMemory() {
+  const res = await fetch(`${BASE}/memory/session`, { method: 'DELETE' })
+  return handleError(res).then(r => r.json())
+}
+
+export async function clearDocumentMemory(docId) {
+  const res = await fetch(`${BASE}/memory/document?doc_id=${encodeURIComponent(docId)}`, { method: 'DELETE' })
+  return handleError(res).then(r => r.json())
+}
+
+export async function clearAllMemory() {
+  const res = await fetch(`${BASE}/memory/all`, { method: 'DELETE' })
   return handleError(res).then(r => r.json())
 }
 

@@ -1,6 +1,5 @@
-import pytest
-from fastapi.testclient import TestClient
 from scholar_lens.api.main import create_app
+from tests.unit.api.helpers import ASGITestClient
 
 
 class TestApp:
@@ -10,14 +9,20 @@ class TestApp:
 
     def test_health_check(self):
         app = create_app()
-        client = TestClient(app)
+        client = ASGITestClient(app)
         response = client.get("/health")
         assert response.status_code == 200
         assert response.json()["status"] == "ok"
 
+    def test_logging_config_includes_graph_logger(self):
+        from scholar_lens.logging_config import GRAPH_LOGGER_NAME, STRUCTURED_LOGGER_NAMES
+
+        assert GRAPH_LOGGER_NAME == "scholar_lens.graph"
+        assert GRAPH_LOGGER_NAME in STRUCTURED_LOGGER_NAMES
+
     def test_cors_headers(self):
         app = create_app()
-        client = TestClient(app)
+        client = ASGITestClient(app)
         response = client.options("/api/config", headers={
             "Origin": "http://localhost:3000",
             "Access-Control-Request-Method": "GET",

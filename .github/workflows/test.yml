@@ -1,0 +1,48 @@
+name: Test
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          pip install -e ".[dev,rag,parsers]"
+
+      - name: Run tests with coverage
+        env:
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+          LLM__API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM__BASE_URL: ${{ secrets.LLM_BASE_URL }}
+          LLM__MODEL: gpt-4o-mini
+          EMBEDDING__API_KEY: ${{ secrets.LLM_API_KEY }}
+          EMBEDDING__BASE_URL: ${{ secrets.LLM_BASE_URL }}
+          EMBEDDING__MODEL: text-embedding-3-small
+          HF_ENDPOINT: https://hf-mirror.com
+        run: |
+          python -m pytest tests/ \
+            --ignore=tests/benchmarks/test_explanation_quality.py \
+            --ignore=tests/benchmarks/test_ragas_eval.py \
+            --ignore=tests/benchmarks/test_educational_effect.py \
+            --ignore=tests/integration/test_end_to_end_session.py \
+            --ignore=tests/integration/test_api_http.py \
+            --cov=scholar_lens \
+            --cov-fail-under=78 \
+            -q

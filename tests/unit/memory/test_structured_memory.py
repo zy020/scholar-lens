@@ -45,3 +45,56 @@ class TestStructuredMemory:
     @pytest.mark.asyncio
     async def test_close(self, memory):
         await memory.close()
+
+    @pytest.mark.asyncio
+    async def test_learning_events_roundtrip(self, memory):
+        await memory.add_learning_event(
+            event_type="chat_question",
+            doc_id="paper_001",
+            section_id="intro",
+            payload={"message": "What is attention?"},
+        )
+
+        events = await memory.get_learning_events("paper_001")
+
+        assert len(events) == 1
+        assert events[0]["event_type"] == "chat_question"
+        assert events[0]["section_id"] == "intro"
+        assert events[0]["payload"]["message"] == "What is attention?"
+
+    @pytest.mark.asyncio
+    async def test_concept_memory_roundtrip_and_increment(self, memory):
+        await memory.upsert_concept_memory(
+            concept="self-attention",
+            doc_id="paper_001",
+            status="learning",
+            signal="chat_question",
+            section_id="method",
+        )
+        await memory.upsert_concept_memory(
+            concept="self-attention",
+            doc_id="paper_001",
+            status="needs_review",
+            signal="explain_text",
+            section_id="method",
+        )
+
+        concepts = await memory.get_concept_memory("paper_001")
+
+        assert len(concepts) == 1
+        assert concepts[0]["concept"] == "self-attention"
+        assert concepts[0]["status"] == "needs_review"
+        assert concepts[0]["evidence_count"] == 2
+        assert concepts[0]["source_events"] == ["chat_question", "explain_text"]
+
+    @pytest.mark.asyncio
+    async def test_clear_memory_scopes(self, memory):
+        await memory.add_learning_event("chat_question", doc_id="paper_001", payload={"message": "attention"})
+        await memory.upsert_concept_memory("attention", doc_id="paper_001", status="learning")
+        await memory.upsert_concept_memory("bert", doc_id="paper_002", status="learning")
+
+        await memory.clear_document_memory("paper_001")
+
+        assert await memory.get_learning_events("paper_001") == []
+        assert await memory.get_concept_memory("paper_001") == []
+        assert [item["concept"] for item in await memory.get_concept_memory("paper_002")] == ["bert"]

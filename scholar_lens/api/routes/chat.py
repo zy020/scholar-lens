@@ -2,50 +2,100 @@ from __future__ import annotations
 
 import json
 import logging
-import threading
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
-from scholar_lens.agents.state import ScholarLensState
-from scholar_lens.agents.tutor import LearningTutorAgent
-from scholar_lens.api.deps import get_memory_manager, get_settings
-from scholar_lens.api.schemas import ChatRequest, ChatMessage
+from scholar_lens.api.chat_graph import (
+    build_revision_messages,
+    run_chat_graph,
+    run_chat_retrieval_graph,
+    run_chat_validation_graph,
+)
+from scholar_lens.api.chat_service import build_chat_messages, build_no_llm_answer, configured_llm_configs
+from scholar_lens.api.deps import get_document_store, get_memory_manager, get_settings
+from scholar_lens.api.memory_events import record_memory_event
+from scholar_lens.api.schemas import ChatRequest, ChatMessage, DocumentStatus
 from scholar_lens.core.circuit_breaker import CircuitBreaker
 from scholar_lens.core.exceptions import CircuitOpenError
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-_tutor: LearningTutorAgent | None = None
-_tutor_lock = threading.Lock()
-_loader = None
-_loader_lock = threading.Lock()
+_runtime_generation = 0
 _api_circuit_breaker = CircuitBreaker(name="llm-api", cooldown_seconds=30.0)
 
 
-def _get_tutor() -> LearningTutorAgent:
-    global _tutor
-    if _tutor is None:
-        with _tutor_lock:
-            if _tutor is None:
-                settings = get_settings()
-                from scholar_lens.core.llm_factory import ChatLLMFactory
-                factory = ChatLLMFactory.from_settings(settings)
-                llm = factory.create(streaming=True)
-                memory = get_memory_manager()
-                _tutor = LearningTutorAgent(llm=llm, core_memory_context=memory.get_core_context())
-    return _tutor
+async def _stream_llm_tokens_with_initial_retry(llm_factory, messages, attempts: int = 2):
+    last_error: Exception | None = None
+    total_attempts = max(1, attempts)
+    for attempt in range(total_attempts):
+        llm = llm_factory()
+        emitted = False
+        try:
+            async for chunk in llm.astream(messages):
+                token = getattr(chunk, "content", "")
+                if token:
+                    emitted = True
+                    yield token
+            return
+        except Exception as exc:
+            last_error = exc
+            if emitted or attempt >= total_attempts - 1:
+                raise
+            logger.warning("Streaming LLM failed before first token; retrying", exc_info=True)
+    if last_error is not None:
+        raise last_error
 
 
-def _get_loader():
-    global _loader
-    if _loader is None:
-        with _loader_lock:
-            if _loader is None:
-                from scholar_lens.rag.layered_loader import LayeredLoader
-                _loader = LayeredLoader()
-    return _loader
+def reset_chat_runtime() -> None:
+    global _runtime_generation
+    _runtime_generation += 1
+
+
+def _document_error(store, doc_id: str) -> str:
+    if not doc_id:
+        return ""
+    doc = store.get(doc_id)
+    if doc is None:
+        return "Document not found"
+    if doc.status != DocumentStatus.ready:
+        return f"Document status: {doc.status.value}"
+    return ""
+
+
+def _section_title(store, doc_id: str, section_id: str) -> str:
+    if not doc_id or not section_id:
+        return ""
+    sections = store.load_sections(doc_id)
+    section = next((s for s in sections if s.section_id == section_id), None)
+    return section.title if section else ""
+
+
+async def _memory_context(doc_id: str = "") -> str:
+    try:
+        return await get_memory_manager().get_personalization_context(doc_id=doc_id)
+    except Exception:
+        logger.warning("Memory context unavailable", exc_info=True)
+        return ""
+
+
+async def _memory_retrieval_hints(doc_id: str = "") -> dict:
+    try:
+        return await get_memory_manager().get_retrieval_hints(doc_id=doc_id)
+    except Exception:
+        logger.warning("Memory retrieval hints unavailable", exc_info=True)
+        return {}
+
+
+async def _record_memory_event(event_type: str, request: ChatRequest, payload: dict | None = None) -> None:
+    await record_memory_event(
+        get_memory_manager(),
+        event_type,
+        doc_id=request.doc_id,
+        section_id=request.section_id,
+        payload=payload or {},
+    )
 
 
 @router.post("")
@@ -54,36 +104,27 @@ async def chat(request: ChatRequest):
         return ChatMessage(role="assistant", content="Service temporarily unavailable. Please try again later.")
 
     try:
-        tutor = _get_tutor()
-
-        # P0.3: try layered loading first
-        loader = _get_loader()
-        layered_context = ""
-        layer_used = "L2"
-        if request.doc_id:
-            content, layer_used = loader.resolve(section_id=request.section_id, need_detail=False)
-            if content:
-                layered_context = f"[{layer_used}] {content[:2000]}"
-
-        state = ScholarLensState(
-            doc_id=request.doc_id,
-            section_id=request.section_id,
-            messages=[
-                {"role": "user", "content": request.message},
-            ],
+        settings = get_settings()
+        store = get_document_store()
+        error = _document_error(store, request.doc_id)
+        if error:
+            return ChatMessage(role="assistant", content=error)
+        await _record_memory_event(
+            "chat_question",
+            request,
+            {"message": request.message[:500], "mode": request.mode, "student_level": request.student_level},
         )
 
-        if layered_context:
-            state.retrieved_chunks = [{"section_id": request.section_id, "text": layered_context}]
-
-        result = await tutor.respond(state)
-
-        if result.error:
-            return ChatMessage(role="assistant", content=f"Error: {result.error}")
-
+        result = await run_chat_graph(
+            store=store,
+            request=request,
+            settings=settings,
+            section_title=_section_title(store, request.doc_id, request.section_id),
+            memory_context=await _memory_context(request.doc_id),
+            memory_hints=await _memory_retrieval_hints(request.doc_id),
+        )
         await _api_circuit_breaker.record_success()
-        last_msg = result.messages[-1]["content"] if result.messages else ""
-        return ChatMessage(role="assistant", content=last_msg, timestamp="")
+        return ChatMessage(role="assistant", content=result.content, evidence=result.evidence)
 
     except Exception:
         await _api_circuit_breaker.record_failure()
@@ -97,84 +138,114 @@ async def chat_stream(request: ChatRequest):
         raise CircuitOpenError("llm-api", _api_circuit_breaker)
 
     settings = get_settings()
-    from scholar_lens.rag.document_store import DocumentStore
-    from scholar_lens.rag.document_index import DocumentIndex, evidence_from_results
-    from scholar_lens.api.schemas import DocumentStatus
-
-    store = DocumentStore()
-    index = DocumentIndex(store)
-
-    def _fallback_answer(evidence: list[dict]) -> str:
-        if evidence:
-            source = evidence[0].get("quote", "").strip()
-            if source:
-                return (
-                    "当前未配置可用的 LLM，因此先返回基于检索证据的简要提示：\n\n"
-                    f"最相关片段：{source[:240]}\n\n"
-                    "请在设置中配置 API Key 和模型后，我可以生成更完整的中文讲解。"
-                )
-        return "当前未配置可用的 LLM，且没有检索到可用文档证据。请先确认文档已解析完成并配置模型。"
+    store = get_document_store()
 
     async def event_stream():
         try:
-            # Validate document
-            if request.doc_id:
-                doc = store.get(request.doc_id)
-                if doc is None:
-                    yield f"data: {json.dumps({'type': 'error', 'message': 'Document not found'})}\n\n"
-                    return
-                if doc.status != DocumentStatus.ready:
-                    yield f"data: {json.dumps({'type': 'error', 'message': f'Document status: {doc.status.value}'})}\n\n"
-                    return
+            error = _document_error(store, request.doc_id)
+            if error:
+                yield f"data: {json.dumps({'type': 'error', 'message': error})}\n\n"
+                return
+            await _record_memory_event(
+                "chat_question",
+                request,
+                {"message": request.message[:500], "mode": request.mode, "student_level": request.student_level},
+            )
 
-            # Retrieve evidence
+            # Retrieve evidence through the LangGraph chat pipeline.
             yield f"data: {json.dumps({'type': 'status', 'stage': 'retrieving', 'message': '正在检索文档证据...'})}\n\n"
-            results = index.search(request.doc_id, request.message, request.section_id, top_k=5)
-            evidence = evidence_from_results(results)
+            if request.deep_mode:
+                yield f"data: {json.dumps({'type': 'status', 'stage': 'graph', 'message': '深度模式：正在编排检索、回答与校验...'})}\n\n"
+                yield f"data: {json.dumps({'type': 'status', 'stage': 'intent', 'message': '深度模式：准备识别问题意图...'})}\n\n"
+                yield f"data: {json.dumps({'type': 'status', 'stage': 'retrieve', 'message': '深度模式：准备扩展检索上下文...'})}\n\n"
+                yield f"data: {json.dumps({'type': 'status', 'stage': 'draft', 'message': '深度模式：准备生成初始回答...'})}\n\n"
+                yield f"data: {json.dumps({'type': 'status', 'stage': 'validate', 'message': '深度模式：准备校验证据一致性...'})}\n\n"
+                result = await run_chat_validation_graph(
+                    store=store,
+                    request=request,
+                    settings=settings,
+                    section_title=_section_title(store, request.doc_id, request.section_id),
+                    memory_context=await _memory_context(request.doc_id),
+                    memory_hints=await _memory_retrieval_hints(request.doc_id),
+                )
+                validation = result.validation or {"passed": True, "issues": [], "correction": ""}
+                if validation.get("passed", True):
+                    await _api_circuit_breaker.record_success()
+                    yield f"data: {json.dumps({'type': 'status', 'stage': 'generating', 'message': '深度模式：校验通过，正在返回回答...'})}\n\n"
+                    yield f"data: {json.dumps({'type': 'token', 'token': result.initial_answer})}\n\n"
+                    yield f"data: {json.dumps({'type': 'evidence', 'items': result.evidence})}\n\n"
+                    yield f"data: {json.dumps({'type': 'done', 'full': result.initial_answer[:5000]})}\n\n"
+                    return
 
-            ctx_parts = []
-            for i, r in enumerate(results):
-                ctx_parts.append(f"[{i + 1}] {r.text[:300]}")
-            ctx = "\n\n".join(ctx_parts) if ctx_parts else "No relevant content found."
+                llm_configs = configured_llm_configs(settings)
+                fallback = str(validation.get("correction") or result.initial_answer)
+                if not llm_configs:
+                    await _api_circuit_breaker.record_success()
+                    yield f"data: {json.dumps({'type': 'status', 'stage': 'generating', 'message': '深度模式：校验未通过，当前未配置模型，返回校验建议...'})}\n\n"
+                    yield f"data: {json.dumps({'type': 'token', 'token': fallback})}\n\n"
+                    yield f"data: {json.dumps({'type': 'evidence', 'items': result.evidence})}\n\n"
+                    yield f"data: {json.dumps({'type': 'done', 'full': fallback[:5000]})}\n\n"
+                    return
 
-            # Stream generation
+                from scholar_lens.core.llm_factory import ChatLLMFactory
+
+                yield f"data: {json.dumps({'type': 'status', 'stage': 'revise', 'message': '深度模式：校验发现可改进点，正在流式修订回答...'})}\n\n"
+                revision_messages = build_revision_messages(
+                    answer=result.initial_answer,
+                    validation=validation,
+                    context=result.context,
+                    request=request,
+                )
+                full = ""
+                async for token in _stream_llm_tokens_with_initial_retry(
+                    lambda: ChatLLMFactory.from_settings(settings).create(config=llm_configs[0], streaming=True),
+                    revision_messages,
+                ):
+                    full += token
+                    yield f"data: {json.dumps({'type': 'token', 'token': token})}\n\n"
+                if not full.strip():
+                    full = fallback
+                    yield f"data: {json.dumps({'type': 'token', 'token': full})}\n\n"
+                await _api_circuit_breaker.record_success()
+                yield f"data: {json.dumps({'type': 'evidence', 'items': result.evidence})}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'full': full[:5000]})}\n\n"
+                return
+
+            retrieval = await run_chat_retrieval_graph(
+                store=store,
+                request=request,
+                settings=settings,
+                memory_hints=await _memory_retrieval_hints(request.doc_id),
+            )
             yield f"data: {json.dumps({'type': 'status', 'stage': 'generating', 'message': '正在生成回答...'})}\n\n"
-            if not settings.llm.api_key or not settings.llm.model:
-                full = _fallback_answer(evidence)
+            llm_configs = configured_llm_configs(settings)
+            if not llm_configs:
+                full = build_no_llm_answer(retrieval.evidence)
+                await _api_circuit_breaker.record_success()
                 yield f"data: {json.dumps({'type': 'token', 'token': full})}\n\n"
-                yield f"data: {json.dumps({'type': 'evidence', 'items': evidence})}\n\n"
+                yield f"data: {json.dumps({'type': 'evidence', 'items': retrieval.evidence})}\n\n"
                 yield f"data: {json.dumps({'type': 'done', 'full': full})}\n\n"
                 return
 
-            from langchain_core.messages import HumanMessage, SystemMessage
-            from scholar_lens.agents.prompts import EXPLAINER_SYSTEM
             from scholar_lens.core.llm_factory import ChatLLMFactory
 
-            factory = ChatLLMFactory.from_settings(settings)
-            llm = factory.create(streaming=True)
-            # Include section context
-            section_context = ""
-            if request.section_id:
-                sections = store.load_sections(request.doc_id)
-                sec = next((s for s in sections if s.section_id == request.section_id), None)
-                if sec:
-                    section_context = f"Current section: {sec.title}\n"
-
-            system_msg = SystemMessage(content=EXPLAINER_SYSTEM)
-            user_msg = HumanMessage(content=f"""{section_context}Evidence from the document:
-{ctx}
-
-Student question: {request.message}
-
-Answer in Chinese. Preserve key English terms inline when needed, but do not append a glossary, related terms, vocabulary list, or extra terminology section unless the student explicitly asks for one. Use only the evidence items that directly support your answer. Number citations using the provided evidence numbers, for example [1]. Do not cite evidence you did not use. If evidence is insufficient, say so.""")
+            llm = ChatLLMFactory.from_settings(settings).create(config=llm_configs[0], streaming=True)
+            messages = build_chat_messages(
+                question=request.message,
+                context_text=retrieval.context.context_text,
+                section_title=_section_title(store, request.doc_id, request.section_id),
+                has_formula_evidence=retrieval.context.has_formula_evidence,
+                memory_context=await _memory_context(request.doc_id),
+                student_level=request.student_level,
+            )
             full = ""
-            async for chunk in llm.astream([system_msg, user_msg]):
-                if hasattr(chunk, 'content') and chunk.content:
-                    full += chunk.content
-                    yield f"data: {json.dumps({'type': 'token', 'token': chunk.content})}\n\n"
-
+            async for chunk in llm.astream(messages):
+                token = getattr(chunk, "content", "")
+                if token:
+                    full += token
+                    yield f"data: {json.dumps({'type': 'token', 'token': token})}\n\n"
             await _api_circuit_breaker.record_success()
-            yield f"data: {json.dumps({'type': 'evidence', 'items': evidence})}\n\n"
+            yield f"data: {json.dumps({'type': 'evidence', 'items': retrieval.evidence})}\n\n"
             yield f"data: {json.dumps({'type': 'done', 'full': full[:5000]})}\n\n"
         except GeneratorExit:
             pass
@@ -196,6 +267,11 @@ async def explain_text(request: ChatRequest):
         return ChatMessage(role="assistant", content="Service temporarily unavailable. Please try again later.")
 
     settings = get_settings()
+    await _record_memory_event(
+        f"{request.mode}_text",
+        request,
+        {"text_preview": request.message[:500]},
+    )
     if not settings.llm.api_key or not settings.llm.model:
         if request.mode == "translate":
             return ChatMessage(

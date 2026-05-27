@@ -7,6 +7,8 @@ import { buildSectionCacheKey, buildSectionTranslationPrompt } from './translati
 import SectionsPanel from './SectionsPanel'
 import 'katex/dist/katex.min.css'
 
+const EXPLAIN_TIMEOUT_MS = 120000
+
 function MarkdownBlock({ text }) {
   if (!text) return null
   return (
@@ -25,8 +27,9 @@ export default function TranslatePanel({ doc, sections, activeSectionId, onSelec
 
   const currentSection = sections.find(s => s.section_id === activeSectionId)
 
-  const doExplain = useCallback(async (text, mode, explicitCacheKey = '') => {
-    const cacheKey = explicitCacheKey || `${doc.doc_id || ''}|${activeSectionId || ''}|${text.slice(0, 80)}|${text.length}|${mode}`
+  const doExplain = useCallback(async (text, mode, explicitCacheKey = '', explicitSectionId = activeSectionId) => {
+    const sectionId = explicitSectionId || ''
+    const cacheKey = explicitCacheKey || `${doc.doc_id || ''}|${sectionId}|${text.slice(0, 80)}|${text.length}|${mode}`
     if (cacheRef.current[cacheKey]) {
       setTranslation(cacheRef.current[cacheKey])
       return
@@ -36,12 +39,12 @@ export default function TranslatePanel({ doc, sections, activeSectionId, onSelec
     const timer = setTimeout(() => {
       setTranslating(false)
       setTranslation('请求超时，请重试')
-    }, 30000)
+    }, EXPLAIN_TIMEOUT_MS)
     try {
       const data = await explainText({
         message: text,
         doc_id: doc.doc_id || '',
-        section_id: activeSectionId || '',
+        section_id: sectionId,
         mode,
       })
       clearTimeout(timer)
@@ -70,7 +73,7 @@ export default function TranslatePanel({ doc, sections, activeSectionId, onSelec
       }
       const cacheKey = buildSectionCacheKey(doc.doc_id, currentSection.section_id, 'translate-section', sectionText)
       const prompt = buildSectionTranslationPrompt(currentSection, sectionText)
-      await doExplain(prompt, 'translate', cacheKey)
+      await doExplain(prompt, 'translate', cacheKey, currentSection.section_id)
     } catch (err) {
       setTranslation(`翻译失败: ${err.message}`)
     } finally {
@@ -89,7 +92,7 @@ export default function TranslatePanel({ doc, sections, activeSectionId, onSelec
         setTranslation('该章节无可解释的文本内容')
         return
       }
-      await doExplain(`Explain the following section in Chinese for a university student. Use concise paragraphs. Preserve model names, acronyms, formulas, and key technical terms in English when translating would lose precision.\n\nSection: ${currentSection.title}\n\n${sectionText}`, 'explain')
+      await doExplain(`Explain the following section in Chinese for a university student. Use concise paragraphs. Preserve model names, acronyms, formulas, and key technical terms in English when translating would lose precision.\n\nSection: ${currentSection.title}\n\n${sectionText}`, 'explain', '', currentSection.section_id)
     } catch (err) {
       setTranslation(`解释失败: ${err.message}`)
     } finally {

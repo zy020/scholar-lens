@@ -42,6 +42,11 @@ export function normalizeCitationText(text, citedOriginalIndexes = []) {
   })
 }
 
+export function getOriginalIndexForDisplayCitation(displayIndex, citedEvidence = []) {
+  const item = citedEvidence.find(e => e.displayIndex === displayIndex)
+  return item ? item.originalIndex : null
+}
+
 export function getEvidenceToggleLabel(citedCount, retrievedCount) {
   if (citedCount > 0) return `原文证据 · 已引用 ${citedCount} 条`
   return `原文证据 · 检索到 ${retrievedCount} 条，回答未显式引用`

@@ -13,6 +13,7 @@ class Section(BaseModel):
     page_end: int | None = None
     section_type: str = "prose"  # prose | method | results | references | citation_context
     difficulty: str = "intermediate"  # beginner | intermediate | advanced
+    chapter: str = ""
     children: list[Section] = Field(default_factory=list)
 
 
@@ -22,6 +23,7 @@ class Term(BaseModel):
     definition_en: str | None = None
     definition_zh: str | None = None
     relation_type: str | None = None  # Used-for | Hyponym-of | Part-of | Compare-with
+    p_known: float = 0.3  # Batch 2.1: estimated probability student knows this term
 
 
 class Reference(BaseModel):

@@ -16,14 +16,43 @@ DOC_ANALYZER_STRUCTURE = """Analyze the following document and extract its struc
 Document text (first 5000 tokens):
 {document_text}
 
-Respond with:
-- doc_type: research_paper | courseware | textbook_chapter
-- language: en | zh | mixed
-- difficulty: beginner | intermediate | advanced
-- sections: list of {{id, title, level, page_start, page_end}}
-- key_terms: list of {{english, chinese, relation_type}}
-- mermaid_map: Mermaid diagram of the structure
+Respond with a JSON object containing:
+- doc_type: "research_paper" | "courseware" | "textbook_chapter"
+- language: "en" | "zh" | "mixed"
+- difficulty: "beginner" | "intermediate" | "advanced"
+- estimated_reading_time: integer (minutes)
+- sections: list of {{"section_id": string, "title": string, "level": integer, "page_start": integer or null, "page_end": integer or null, "section_type": "prose"|"method"|"results"}}
+- key_terms: list of {{"english": string, "chinese": string, "relation_type": "Used-for"|"Hyponym-of"|"Part-of"|"Compare-with"|null}}. Infer relation types between terms when possible (e.g. "multi-head attention" Hyponym-of "attention", "softmax" Used-for "attention calculation")
+- prerequisites: list of prerequisite concept names
+- mermaid_map: Mermaid mindmap or graph showing the document structure (use mindmap or graph TD syntax, include all sections)
 """
+
+DOC_ANALYZER_L0 = """Generate a very short L0 summary (~100 tokens) for the following document section.
+This summary will be used for quick retrieval — it should capture only the most essential point.
+
+Section title: {title}
+Section text (first 2000 chars):
+{text}
+
+L0 summary (1-2 sentences, ~100 tokens):"""
+
+DOC_ANALYZER_L1 = """Generate a detailed L1 overview (~2000 tokens) for the following document section.
+Include key concepts, methodology, findings, and important technical details.
+
+Section title: {title}
+Section text (first 5000 chars):
+{text}
+
+L1 overview (~2000 tokens):"""
+
+DOC_ANALYZER_TERMS = """Extract 5-10 key technical terms from the following document excerpt.
+For each term, provide the English term and its Chinese translation.
+Focus on domain-specific terms that a Chinese student would need to understand.
+
+Document excerpt:
+{text}
+
+Respond with a JSON list: [{{"english": "...", "chinese": "..."}}, ...]"""
 
 EXPLAINER_SYSTEM = """You are a bilingual academic content explainer. Your job is to:
 1. Translate English academic text to Chinese while preserving key English terms inline

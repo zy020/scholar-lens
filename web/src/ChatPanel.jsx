@@ -7,6 +7,7 @@ import {
   getCitedEvidenceView,
   getEvidenceCardId,
   getEvidenceToggleLabel,
+  getOriginalIndexForDisplayCitation,
   normalizeCitationText,
 } from './chatEvidence'
 import 'katex/dist/katex.min.css'
@@ -40,15 +41,31 @@ function numberSections(sections) {
 
 function cleanSectionLabel(sectionId, docId, numberedSections) {
   if (!sectionId) return ''
+  const slideMatch = String(sectionId).match(/^slide_(\d+)$/)
+  if (slideMatch) return `Slide ${Number(slideMatch[1]) + 1}`
   if (numberedSections && numberedSections.length) {
     const sec = numberedSections.find(s => s.section_id === sectionId)
     if (sec && sec.displayNumber) {
       return `${sec.displayNumber} ${sec.title}`
     }
-    if (sec) return sec.title || sectionId
+    if (sec) return sec.title || '当前章节'
   }
   const stripped = docId ? sectionId.replace(docId + '_', '') : sectionId
-  return stripped || sectionId
+  if (/^\d+$/.test(stripped)) return `章节 ${Number(stripped) + 1}`
+  if (/^[a-z]+_[a-f0-9]{8,}/i.test(stripped) || /^[a-f0-9]{8,}$/i.test(stripped)) return '相关章节'
+  return stripped || '相关章节'
+}
+
+function documentStatusLabel(status) {
+  const labels = {
+    uploaded: '已上传，等待解析',
+    parsing: '正在解析',
+    chunking: '正在切分内容',
+    indexing: '正在建立索引',
+    ready: '已就绪',
+    failed: '解析失败',
+  }
+  return labels[status] || '正在处理'
 }
 
 export default function ChatPanel({ doc, activeSectionId, sectionTitle, sections }) {
@@ -56,6 +73,7 @@ export default function ChatPanel({ doc, activeSectionId, sectionTitle, sections
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
   const [status, setStatus] = useState('')
+  const [deepMode, setDeepMode] = useState(false)
   const [expandedEvidence, setExpandedEvidence] = useState({})
   const bottomRef = useRef(null)
   const abortRef = useRef(null)
@@ -87,19 +105,13 @@ export default function ChatPanel({ doc, activeSectionId, sectionTitle, sections
     setExpandedEvidence(prev => ({ ...prev, [msgIdx]: !prev[msgIdx] }))
   }
 
-  const handleCitationClick = (idx) => {
-    setExpandedEvidence(prev => {
-      const next = { ...prev }
-      for (let i = 0; i < messages.length; i++) {
-        if (messages[i].evidence?.length > idx) {
-          next[i] = true
-        }
-      }
-      return next
-    })
+  const handleCitationClick = (msgIdx, displayIndex, citedEvidence) => {
+    const originalIndex = getOriginalIndexForDisplayCitation(displayIndex, citedEvidence)
+    if (originalIndex == null) return
+    setExpandedEvidence(prev => ({ ...prev, [msgIdx]: true }))
     setTimeout(() => {
-      const cards = document.querySelectorAll('.evidence-card')
-      if (cards[idx]) cards[idx].scrollIntoView({ behavior: 'smooth', block: 'center' })
+      const card = document.getElementById(getEvidenceCardId(msgIdx, originalIndex))
+      if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }, 100)
   }
 
@@ -120,7 +132,7 @@ export default function ChatPanel({ doc, activeSectionId, sectionTitle, sections
     try {
       let full = ''
       for await (const event of streamChat(
-        { message: text, doc_id: doc.doc_id || '', section_id: activeSectionId || '', mode: 'chat' },
+        { message: text, doc_id: doc.doc_id || '', section_id: activeSectionId || '', mode: 'chat', deep_mode: deepMode },
         controller.signal
       )) {
         if (event.type === 'status') setStatus(event.message)
@@ -174,14 +186,14 @@ export default function ChatPanel({ doc, activeSectionId, sectionTitle, sections
 
   const stopChat = () => abortRef.current?.abort()
 
-  const renderContent = (text) => {
+  const renderContent = (text, msgIdx, citedEvidence) => {
     if (!text) return ''
     const parts = text.split(/(\[\d+\])/g)
     return parts.map((part, i) => {
       const m = part.match(/^\[(\d+)\]$/)
       if (m) {
         const num = parseInt(m[1], 10)
-        return <CitationMarker key={i} num={num} onClick={() => handleCitationClick(num - 1)} />
+        return <CitationMarker key={i} num={num} onClick={() => handleCitationClick(msgIdx, num, citedEvidence)} />
       }
       return <span key={i} className="markdown-inline"><MarkdownBlock text={part} /></span>
     })
@@ -191,7 +203,13 @@ export default function ChatPanel({ doc, activeSectionId, sectionTitle, sections
     <div className="chat-panel">
       <div className="chat-toolbar">
         <span>{sectionTitle ? `当前章节: ${sectionTitle}` : '全文问答'}</span>
-        <button onClick={clearChat} disabled={messages.length === 0 && !streaming}>清除对话</button>
+        <div className="chat-toolbar-actions">
+          <label className="chat-deep-toggle">
+            <input type="checkbox" checked={deepMode} onChange={e => setDeepMode(e.target.checked)} disabled={streaming} />
+            深度模式
+          </label>
+          <button onClick={clearChat} disabled={messages.length === 0 && !streaming}>清除对话</button>
+        </div>
       </div>
       <div className="messages">
         {messages.length === 0 && (
@@ -199,7 +217,7 @@ export default function ChatPanel({ doc, activeSectionId, sectionTitle, sections
             {doc.doc_id
               ? doc.status === 'ready'
                 ? `已加载: ${doc.name}${sectionTitle ? ' · ' + sectionTitle : ''}。开始提问吧。`
-                : `文档状态: ${doc.status}，请等待解析完成`
+                : `${documentStatusLabel(doc.status)}，请稍后再提问`
               : '请先上传文档'}
           </p>
         )}
@@ -218,7 +236,7 @@ export default function ChatPanel({ doc, activeSectionId, sectionTitle, sections
             <div key={i} className={`msg ${msg.role}`}>
               <div className="msg-content">
                 {msg.content
-                  ? renderContent(normalizedContent)
+                  ? renderContent(normalizedContent, i, citedEvidence)
                   : (streaming && i === messages.length - 1 ? (status || '...') : '')}
               </div>
               {msg.role === 'assistant' && hasEvidence && (
@@ -242,9 +260,8 @@ export default function ChatPanel({ doc, activeSectionId, sectionTitle, sections
                                  id={getEvidenceCardId(i, e.originalIndex)}>
                               <div className="evidence-meta">
                                 <span className="evidence-ref">[{e.displayIndex}]</span>
-                                <span className="evidence-source">Section: {cleanSectionLabel(e.section_id, doc.doc_id, numberedSections)}</span>
-                                {e.page != null && <span className="evidence-page">· Page: {e.page}</span>}
-                                <span className="evidence-score">Score: {(e.score || 0).toFixed(1)}</span>
+                                <span className="evidence-source">章节：{cleanSectionLabel(e.section_id, doc.doc_id, numberedSections)}</span>
+                                {e.page != null && <span className="evidence-page">· 第 {Number(e.page) + 1} 页</span>}
                               </div>
                               <blockquote>{e.quote?.slice(0, 250)}{(e.quote?.length || 0) > 250 ? '...' : ''}</blockquote>
                             </div>

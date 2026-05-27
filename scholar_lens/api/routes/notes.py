@@ -7,20 +7,40 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
 
-from scholar_lens.api.brief_builder import build_fallback_brief, build_lecture_fallback_brief, build_low_text_brief
-from scholar_lens.api.deps import get_memory_manager
+from scholar_lens.api.brief_builder import build_not_generated_brief, build_unavailable_brief
+from scholar_lens.api.brief_graph import is_lecture_doc_type, run_brief_generation_graph
+from scholar_lens.api.chat_service import configured_llm_configs
+from scholar_lens.api.document_analysis import hydrate_memory_from_analysis, load_document_analysis
+from scholar_lens.api.deps import get_document_store, get_memory_manager
+from scholar_lens.api.memory_events import record_memory_event
 from scholar_lens.api.schemas import NotesResponse, PaperBriefResponse
 from scholar_lens.rag.document_store import DocumentStore
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-_store = DocumentStore()
+_store: DocumentStore | None = None
+
+
+def _get_store() -> DocumentStore:
+    return _store if _store is not None else get_document_store()
+
+
+async def _record_memory_event(memory, event_type: str, doc_id: str, section_id: str = "", payload: dict | None = None) -> None:
+    await record_memory_event(
+        memory,
+        event_type,
+        doc_id=doc_id,
+        section_id=section_id,
+        payload=payload or {},
+    )
+
+
 BRIEF_LLM_MIN_TIMEOUT_SECONDS = 120.0
 
 
 def _brief_cache_path(doc_id: str) -> Path:
-    return _store.document_dir(doc_id) / "paper_brief.json"
+    return _get_store().document_dir(doc_id) / "paper_brief.json"
 
 
 def _load_cached_brief(doc_id: str) -> PaperBriefResponse | None:
@@ -37,33 +57,62 @@ def _save_cached_brief(doc_id: str, brief: PaperBriefResponse) -> None:
     )
 
 
-def _is_lecture_doc(doc_type: str) -> bool:
-    return doc_type in {"slides_pdf", "courseware_pptx", "lecture_slide", "courseware"}
+def _is_lecture_doc(doc_type: str, sections: list | None = None) -> bool:
+    return is_lecture_doc_type(doc_type)
 
 
-def _needs_low_text_brief(text_quality: str, ocr_needed: bool) -> bool:
-    return text_quality in {"image_based", "unknown"} or (text_quality == "weak" and ocr_needed)
+def build_concept_map_markdown(doc_id: str, sections: list) -> str:
+    lines = [f"# Concept Map — {doc_id}", "", "```mermaid", "graph TD", "  doc[Document]"]
+    parent_by_level: dict[int, str] = {0: "doc"}
+    for index, section in enumerate(sections[:30], start=1):
+        node_id = f"s{index}"
+        title = getattr(section, "title", "") or getattr(section, "section_id", f"Section {index}")
+        safe_title = str(title).replace('"', "'").replace("[", "(").replace("]", ")")
+        level = max(1, int(getattr(section, "level", 1) or 1))
+        parent_id = parent_by_level.get(level - 1, "doc")
+        lines.append(f'  {node_id}["{safe_title}"]')
+        lines.append(f"  {parent_id} --> {node_id}")
+        parent_by_level[level] = node_id
+        for deeper in [k for k in parent_by_level if k > level]:
+            parent_by_level.pop(deeper, None)
+    if not sections:
+        lines.append('  empty["No extracted sections"]')
+        lines.append("  doc --> empty")
+    lines.extend(["```", ""])
+    return "\n".join(lines)
 
 
 @router.get("/{doc_id}", response_model=NotesResponse)
 async def get_notes(doc_id: str):
+    store = _get_store()
     memory = get_memory_manager()
+    understanding = load_document_analysis(store, doc_id)
+    if understanding is not None:
+        hydrate_memory_from_analysis(memory, understanding, doc_id=doc_id)
     core = memory.core_memory
     terms = []
     for e in core.active_glossary:
         parts = e.split("|||", 1)
         terms.append({"english": parts[0], "chinese": parts[1] if len(parts) > 1 else ""})
+    if understanding is not None:
+        existing = {term["english"] for term in terms}
+        for term in understanding.key_terms:
+            if term.english and term.english not in existing:
+                terms.append({"english": term.english, "chinese": term.chinese})
+                existing.add(term.english)
     return NotesResponse(
         doc_id=doc_id,
         terms=terms,
         reading_progress={},
-        concept_map=core.session_summary,
+        concept_map=understanding.mermaid_map if understanding and understanding.mermaid_map else core.session_summary,
     )
 
 
 @router.get("/{doc_id}/brief", response_model=PaperBriefResponse)
 async def get_paper_brief(doc_id: str, force: bool = Query(False)):
-    doc = _store.get(doc_id)
+    store = _get_store()
+    memory = get_memory_manager()
+    doc = store.get(doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found")
 
@@ -71,77 +120,67 @@ async def get_paper_brief(doc_id: str, force: bool = Query(False)):
         cached = _load_cached_brief(doc_id)
         if cached:
             cached.source = "cached"
+            await _record_memory_event(memory, "brief_view", doc_id=doc_id, payload={"source": "cached"})
             return cached
-
-    sections = _store.load_sections(doc_id)
-    chunks = _store.load_chunks(doc_id)
-
-    # Route low-text before any LLM call
-    if _needs_low_text_brief(doc.text_quality, doc.ocr_needed):
-        brief = build_low_text_brief(
-            doc_id=doc_id,
-            title=doc.name,
-            doc_type=doc.doc_type,
-            text_quality=doc.text_quality,
-            diagnostic_notes=doc.diagnostic_notes,
-        )
-        _save_cached_brief(doc_id, brief)
-        return brief
-
-    from scholar_lens.api.brief_builder import build_llm_brief_prompt, build_lecture_llm_brief_prompt, parse_llm_brief_json
-    from scholar_lens.api.deps import get_settings
-
-    settings = get_settings()
-    if settings.llm.api_key and settings.llm.model:
-        try:
-            from langchain_core.messages import HumanMessage, SystemMessage
-            from scholar_lens.core.llm_factory import ChatLLMFactory
-
-            brief_llm_config = settings.llm.model_copy(
-                update={"request_timeout": max(settings.llm.request_timeout, BRIEF_LLM_MIN_TIMEOUT_SECONDS)}
-            )
-            llm = ChatLLMFactory.from_settings(settings).create(config=brief_llm_config, streaming=False)
-            if _is_lecture_doc(doc.doc_type):
-                prompt = build_lecture_llm_brief_prompt(doc.name, sections, chunks)
-            else:
-                prompt = build_llm_brief_prompt(doc.name, sections, chunks)
-            response = await llm.ainvoke([
-                SystemMessage(content="You produce strict JSON for academic paper understanding briefs."),
-                HumanMessage(content=prompt),
-            ])
-            brief = parse_llm_brief_json(doc_id, doc.name, response.content)
-            if _is_lecture_doc(doc.doc_type):
-                brief.brief_type = "lecture"
-            brief.text_quality = doc.text_quality
-            brief.ocr_needed = doc.ocr_needed
-            _save_cached_brief(doc_id, brief)
-            return brief
-        except Exception as exc:
-            if _is_lecture_doc(doc.doc_type):
-                brief = build_lecture_fallback_brief(
-                    doc_id, doc.name, sections, chunks,
-                    text_quality=doc.text_quality,
-                    ocr_needed=doc.ocr_needed,
-                )
-            else:
-                brief = build_fallback_brief(doc_id, doc.name, sections, chunks)
-                brief.text_quality = doc.text_quality
-                brief.ocr_needed = doc.ocr_needed
-            brief.error = f"LLM brief failed; fallback used: {exc}"
-            _save_cached_brief(doc_id, brief)
-            return brief
-
-    if _is_lecture_doc(doc.doc_type):
-        brief = build_lecture_fallback_brief(
-            doc_id, doc.name, sections, chunks,
+        sections = store.load_sections(doc_id)
+        return build_not_generated_brief(
+            doc_id,
+            doc.name,
+            brief_type="lecture" if _is_lecture_doc(doc.doc_type, sections) else "paper",
             text_quality=doc.text_quality,
             ocr_needed=doc.ocr_needed,
         )
-    else:
-        brief = build_fallback_brief(doc_id, doc.name, sections, chunks)
-        brief.text_quality = doc.text_quality
-        brief.ocr_needed = doc.ocr_needed
-    _save_cached_brief(doc_id, brief)
+
+    sections = store.load_sections(doc_id)
+    chunks = store.load_chunks(doc_id)
+    understanding = load_document_analysis(store, doc_id)
+
+    from scholar_lens.api.deps import get_settings
+
+    settings = get_settings()
+    llm_configs = configured_llm_configs(settings)
+    if llm_configs:
+        try:
+            from scholar_lens.core.llm_factory import ChatLLMFactory
+
+            brief_llm_config = llm_configs[0].model_copy(
+                update={"request_timeout": max(llm_configs[0].request_timeout, BRIEF_LLM_MIN_TIMEOUT_SECONDS)}
+            )
+            llm = ChatLLMFactory.from_settings(settings).create(config=brief_llm_config, streaming=False)
+            brief = await run_brief_generation_graph(
+                doc_id=doc_id,
+                title=doc.name,
+                doc_type=doc.doc_type,
+                text_quality=doc.text_quality,
+                ocr_needed=doc.ocr_needed,
+                sections=sections,
+                chunks=chunks,
+                llm=llm,
+            )
+            _save_cached_brief(doc_id, brief)
+            await _record_memory_event(memory, "brief_generate", doc_id=doc_id, payload={"brief_type": brief.brief_type, "source": brief.source})
+            return brief
+        except Exception as exc:
+            brief = build_unavailable_brief(
+                doc_id,
+                doc.name,
+                brief_type="lecture" if _is_lecture_doc(doc.doc_type, sections) else "paper",
+                text_quality=doc.text_quality,
+                ocr_needed=doc.ocr_needed,
+                error=f"LLM brief failed; enhanced brief required: {exc}",
+            )
+            await _record_memory_event(memory, "brief_generate", doc_id=doc_id, payload={"brief_type": brief.brief_type, "source": brief.source, "error": brief.error[:300]})
+            return brief
+
+    brief = build_unavailable_brief(
+        doc_id,
+        doc.name,
+        brief_type="lecture" if _is_lecture_doc(doc.doc_type, sections) else "paper",
+        text_quality=doc.text_quality,
+        ocr_needed=doc.ocr_needed,
+        error="LLM brief is not configured; enhanced brief is required.",
+    )
+    await _record_memory_event(memory, "brief_generate", doc_id=doc_id, payload={"brief_type": brief.brief_type, "source": brief.source})
     return brief
 
 
@@ -205,19 +244,14 @@ position: {core.current_position}
         tags=["auto", doc_id],
     )
 
-    # 4. Concept map placeholder
+    # 4. Concept map from extracted sections
     cm_dir = memory.reflection._dir.parent / "concept_maps"
     cm_dir.mkdir(parents=True, exist_ok=True)
     cm_path = cm_dir / f"{doc_id}_concepts.md"
-    cm_path.write_text(
-        f"# Concept Map — {doc_id}\n\n"
-        "```mermaid\ngraph TD\n"
-        "  A[Document] --> B[Section 1]\n"
-        "  A --> C[Section 2]\n"
-        "```\n\n"
-        "*Update with actual concept relationships.*\n",
-        encoding="utf-8",
-    )
+    sections = _get_store().load_sections(doc_id)
+    cm_path.write_text(build_concept_map_markdown(doc_id, sections), encoding="utf-8")
     files_written.append(str(cm_path))
+
+    await _record_memory_event(memory, "export_obsidian", doc_id=doc_id, payload={"files": len(files_written)})
 
     return {"status": "exported", "files": files_written, "doc_id": doc_id}

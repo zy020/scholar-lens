@@ -5,7 +5,10 @@ import ReaderPanel from './ReaderPanel'
 import TranslatePanel from './TranslatePanel'
 import NotesPanel from './NotesPanel'
 import ConfigPanel from './ConfigPanel'
-import { listDocuments, uploadDocument, deleteDocument, getSections } from './api'
+import MemoryPanel from './MemoryPanel'
+import { listDocuments, uploadPaperDocument, uploadCoursewareDocument, deleteDocument, getSections } from './api'
+import { formatUploadError } from './uploadErrorUtils'
+import { canShowWorkspace } from './workspaceVisibility'
 import './App.css'
 
 const MIN_READER_WIDTH = 360
@@ -13,10 +16,11 @@ const MIN_WORKSPACE_WIDTH = 260
 const DEFAULT_READER_WIDTH = 500
 
 const WORKSPACE_TABS = [
-  { id: 'chat', label: 'Chat' },
-  { id: 'translate', label: 'Translate' },
-  { id: 'study', label: 'Study Brief' },
-  { id: 'config', label: 'Config' },
+  { id: 'chat', label: '问答' },
+  { id: 'translate', label: '翻译' },
+  { id: 'study', label: '学习简报' },
+  { id: 'memory', label: '记忆' },
+  { id: 'config', label: '配置' },
 ]
 
 export default function App() {
@@ -47,21 +51,22 @@ export default function App() {
     }).catch(() => setSections([]))
   }, [active])
 
-  const handleUpload = useCallback(async (e) => {
+  const handleUpload = useCallback(async (e, uploadKind = 'courseware') => {
     const files = e.target.files
     if (!files.length) return
     setUploading(true)
     setError('')
     let lastDocId = ''
+    const upload = uploadKind === 'paper' ? uploadPaperDocument : uploadCoursewareDocument
     for (const f of files) {
       try {
-        const result = await uploadDocument(f)
+        const result = await upload(f)
         if (result.doc_id) lastDocId = result.doc_id
         if (result.status === 'failed') {
           setError(result.error || `${f.name} 解析失败`)
         }
       } catch (err) {
-        setError(`${f.name} 上传失败: ${err.message}`)
+        setError(formatUploadError(f.name, uploadKind, err.message))
       }
     }
     try {
@@ -86,6 +91,11 @@ export default function App() {
     }).catch(() => {})
   }, [active])
 
+  const handleDocumentUpdated = useCallback((updatedDoc) => {
+    if (!updatedDoc?.doc_id) return
+    setDocs(prev => prev.map(doc => (doc.doc_id === updatedDoc.doc_id ? updatedDoc : doc)))
+  }, [])
+
   const stopResize = useCallback(() => {
     dragging.current = false
     setIsResizing(false)
@@ -101,6 +111,21 @@ export default function App() {
     document.body.style.userSelect = ''
   }, [])
 
+  const clampReaderWidth = useCallback((width) => {
+    const total = mainRef.current?.getBoundingClientRect().width || window.innerWidth
+    const maxReader = Math.max(MIN_READER_WIDTH, total - MIN_WORKSPACE_WIDTH - 10)
+    return Math.min(maxReader, Math.max(MIN_READER_WIDTH, width))
+  }, [])
+
+  useEffect(() => {
+    const applyClamp = () => {
+      setReaderWidth(width => clampReaderWidth(width))
+    }
+    applyClamp()
+    window.addEventListener('resize', applyClamp)
+    return () => window.removeEventListener('resize', applyClamp)
+  }, [clampReaderWidth, active])
+
   // Resize
   const handleResizePointerDown = useCallback((e) => {
     e.preventDefault()
@@ -114,10 +139,7 @@ export default function App() {
     const onMove = (ev) => {
       if (!dragging.current) return
       const delta = ev.clientX - startX
-      const total = mainRef.current?.getBoundingClientRect().width || window.innerWidth
-      const maxReader = Math.max(MIN_READER_WIDTH, total - MIN_WORKSPACE_WIDTH - 10)
-      const next = Math.min(maxReader, Math.max(MIN_READER_WIDTH, startWidth + delta))
-      setReaderWidth(next)
+      setReaderWidth(clampReaderWidth(startWidth + delta))
     }
     const onEnd = () => {
       stopResize()
@@ -134,12 +156,13 @@ export default function App() {
     window.addEventListener('pointerup', onEnd)
     window.addEventListener('pointercancel', onEnd)
     window.addEventListener('blur', onEnd)
-  }, [readerWidth, stopResize])
+  }, [clampReaderWidth, readerWidth, stopResize])
 
   const activeDoc = docs.find(d => d.doc_id === active) || {}
   const visibleSections = active ? sections : []
   const visibleSectionId = active ? activeSectionId : ''
   const hasDoc = !!activeDoc.doc_id
+  const showWorkspace = canShowWorkspace({ hasDoc, tab })
 
   return (
     <div className="app">
@@ -147,8 +170,11 @@ export default function App() {
                onUpload={handleUpload} onDelete={handleDelete} uploading={uploading} />
       <main className="main" ref={mainRef}>
         {error && <div className="app-error">{error}</div>}
-        {!hasDoc ? (
-          <div className="empty-state">请先上传文档</div>
+        {!showWorkspace ? (
+          <div className="empty-state">
+            <p>请先上传文档，或先配置模型。</p>
+            <button className="save-btn" onClick={() => setTab('config')}>打开配置</button>
+          </div>
         ) : (
           <div className={`reader-workspace ${isResizing ? 'resizing' : ''}`}>
             <div className="reader-pane" style={{ width: readerWidth, minWidth: readerWidth }}>
@@ -167,7 +193,7 @@ export default function App() {
               </nav>
               <div className="panel">
                 <div className={`tab-panel ${tab === 'chat' ? 'active' : ''}`} hidden={tab !== 'chat'}>
-                  <ChatPanel key={activeDoc.doc_id} doc={activeDoc} activeSectionId={visibleSectionId} sections={visibleSections}
+                  <ChatPanel doc={activeDoc} activeSectionId={visibleSectionId} sections={visibleSections}
                              sectionTitle={visibleSections.find(s => s.section_id === visibleSectionId)?.title || ''} />
                 </div>
                 <div className={`tab-panel ${tab === 'translate' ? 'active' : ''}`} hidden={tab !== 'translate'}>
@@ -175,7 +201,10 @@ export default function App() {
                                   onSelectSection={(s) => setActiveSectionId(s.section_id)} />
                 </div>
                 <div className={`tab-panel ${tab === 'study' ? 'active' : ''}`} hidden={tab !== 'study'}>
-                  <NotesPanel key={activeDoc.doc_id || 'empty'} doc={activeDoc} docId={active} />
+                  <NotesPanel key={activeDoc.doc_id || 'empty'} doc={activeDoc} docId={active} onDocumentUpdated={handleDocumentUpdated} />
+                </div>
+                <div className={`tab-panel ${tab === 'memory' ? 'active' : ''}`} hidden={tab !== 'memory'}>
+                  <MemoryPanel docId={active} docName={activeDoc.name || ''} />
                 </div>
                 <div className={`tab-panel ${tab === 'config' ? 'active' : ''}`} hidden={tab !== 'config'}>
                   <ConfigPanel />

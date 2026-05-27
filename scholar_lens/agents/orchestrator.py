@@ -17,8 +17,9 @@ class ScholarLensOrchestrator:
     """LangGraph orchestration for ScholarLens agent pipeline.
 
     Two graphs:
-    1. Pipeline graph: upload → analyze → explain → validate (one-shot processing)
-    2. Tutor graph: tutor loop with on-demand explainer/validator (interactive)
+    1. Pipeline graph: upload → analyze → END (one-shot document processing)
+       Only runs the Document Analyzer. Explanations are lazy/on-demand.
+    2. Tutor graph: tutor → explainer → validator → tutor (interactive loop)
     """
 
     def __init__(
@@ -36,18 +37,18 @@ class ScholarLensOrchestrator:
     def build_pipeline_graph(self) -> StateGraph:
         """Build the document processing pipeline graph.
 
-        Flow: analyze → explain → validate → END
+        Flow: analyze → END
+
+        The pipeline only extracts document structure, concepts, and
+        L0/L1 summaries. Explanations are generated lazily through
+        the tutor graph when the student requests them.
         """
         graph = StateGraph(ScholarLensState)
 
         graph.add_node("analyze", self.doc_analyzer.analyze)
-        graph.add_node("explain", self.explainer.explain)
-        graph.add_node("validate", self.validator.validate)
 
         graph.set_entry_point("analyze")
-        graph.add_edge("analyze", "explain")
-        graph.add_edge("explain", "validate")
-        graph.add_edge("validate", END)
+        graph.add_edge("analyze", END)
 
         return graph
 
@@ -65,12 +66,17 @@ class ScholarLensOrchestrator:
         graph.set_entry_point("tutor")
 
         def route_after_tutor(state: ScholarLensState) -> str:
-            """Decide whether to invoke explainer or end."""
             if state.explanation_request and not state.explanation_result:
                 return "explainer"
             return END
 
-        graph.add_conditional_edges("tutor", route_after_tutor, {"explainer": "explainer", END: END})
+        def route_after_validator(state: ScholarLensState) -> str:
+            return "tutor"
+
+        graph.add_conditional_edges(
+            "tutor", route_after_tutor,
+            {"explainer": "explainer", END: END},
+        )
         graph.add_edge("explainer", "validator")
         graph.add_edge("validator", "tutor")
 

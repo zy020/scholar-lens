@@ -3,6 +3,12 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 
+def estimate_tokens(text: str) -> int:
+    chinese_chars = sum(1 for c in text if "一" <= c <= "鿿")
+    other_chars = len(text) - chinese_chars
+    return chinese_chars // 2 + other_chars // 4
+
+
 class TokenUsage(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0

@@ -1,52 +1,103 @@
 export function briefSourceLabel(source) {
-  if (source === 'llm') return 'LLM Brief'
-  if (source === 'cached') return 'Cached Brief'
-  return 'Fallback Brief'
+  if (source === 'llm') return '模型生成'
+  if (source === 'cached') return '已缓存'
+  if (source === 'not_generated') return '尚未生成'
+  if (source === 'unavailable') return '需要配置模型'
+  return '未知来源'
 }
 
 export function briefTitle(brief) {
-  if (brief?.brief_type === 'lecture') return 'Lecture Study Brief'
-  if (brief?.brief_type === 'low_text') return 'Low Text Study Brief'
-  return 'Paper Understanding Brief'
+  if (brief?.brief_type === 'lecture') return '课件学习简报'
+  return '论文理解简报'
+}
+
+export function textQualityLabel(quality) {
+  const labels = {
+    good: '良好',
+    weak: '偏弱',
+    image_based: '图片型',
+    unknown: '未知',
+  }
+  return labels[quality] || quality || '未知'
+}
+
+export function reviewLevelLabel(level) {
+  const labels = {
+    basic: '基础',
+    deep: '深入',
+    critical: '批判',
+  }
+  return labels[level] || '复习'
+}
+
+export function briefSectionLabels(brief) {
+  if (brief?.brief_type === 'lecture') {
+    return {
+      problem: '本讲主题与学习目标',
+      contributions: '知识点脉络',
+      method: '复习路径',
+      focus: '重点 Slide',
+    }
+  }
+  return {
+    problem: '研究问题与动机',
+    contributions: '核心贡献',
+    method: '方法脉络',
+    focus: '阅读重点',
+  }
+}
+
+export function reviewQuestionsTitle(brief) {
+  if (brief?.brief_type === 'lecture') return '自测问题'
+  return '复习问题'
 }
 
 export function formatBriefMarkdown(brief) {
   if (!brief) return ''
   const title = briefTitle(brief)
+  const labels = briefSectionLabels(brief)
   const lines = [
     `# ${title}: ${brief.title || ''}`,
     '',
-    `Source: ${briefSourceLabel(brief.source)}`,
-    `Text Quality: ${brief.text_quality || 'unknown'}`,
-    `OCR Needed: ${brief.ocr_needed ? 'yes' : 'no'}`,
+    `来源：${briefSourceLabel(brief.source)}`,
+    `文本质量：${textQualityLabel(brief.text_quality)}`,
+    `建议 OCR：${brief.ocr_needed ? '是' : '否'}`,
     '',
     '## 核心速览',
     ...(brief.tldr || []).map(item => `- ${item}`),
     '',
-    '## Problem & Motivation',
+    `## ${labels.problem}`,
     brief.problem || '',
     '',
     brief.motivation || '',
     '',
-    '## Contribution Map',
-    ...(brief.contributions || []).map(item => {
-      const evidence = item.evidence?.quote ? ` Evidence: ${item.evidence.quote}` : ''
-      return `- **${item.claim}**: ${item.why_it_matters || ''}${evidence}`
-    }),
+    ...((brief.contributions || []).length > 0 ? [
+      `## ${labels.contributions}`,
+      ...(brief.contributions || []).map(item => {
+        const evidence = item.evidence?.quote ? ` Evidence: ${item.evidence.quote}` : ''
+        return `- **${item.claim}**: ${item.why_it_matters || ''}${evidence}`
+      }),
+      '',
+    ] : []),
+    ...((brief.method_walkthrough || []).length > 0 ? [
+      `## ${labels.method}`,
+      ...(brief.method_walkthrough || []).map((item, index) => `${index + 1}. **${item.title}**: ${item.explanation}`),
+      '',
+    ] : []),
+    ...((brief.key_terms || []).length > 0 ? [
+      '## 关键术语',
+      ...(brief.key_terms || []).map(item => `- **${item.term}**: ${item.explanation_zh || ''}`),
+      '',
+    ] : []),
+    ...((brief.reading_focus || []).length > 0 ? [
+      `## ${labels.focus}`,
+      ...(brief.reading_focus || []).map(item => `- **${item.section_title}**: ${item.reason}`),
+      '',
+    ] : []),
+    `## ${reviewQuestionsTitle(brief)}`,
+    ...(brief.review_questions || []).map(item => `- [${reviewLevelLabel(item.level)}] ${item.question} ${item.expected_answer_hint ? `(${item.expected_answer_hint})` : ''}`),
     '',
-    '## Method Walkthrough',
-    ...(brief.method_walkthrough || []).map((item, index) => `${index + 1}. **${item.title}**: ${item.explanation}`),
-    '',
-    '## Key Terms',
-    ...(brief.key_terms || []).map(item => `- **${item.term}**: ${item.explanation_zh || ''}`),
-    '',
-    '## Reading Focus',
-    ...(brief.reading_focus || []).map(item => `- **${item.section_title}**: ${item.reason}`),
-    '',
-    '## Review Questions',
-    ...(brief.review_questions || []).map(item => `- [${item.level}] ${item.question} ${item.expected_answer_hint ? `(${item.expected_answer_hint})` : ''}`),
-    '',
-    '## Limitations',
+    '## 注意事项',
     ...(brief.limitations || []).map(item => `- ${item}`),
   ]
   return lines.join('\n')
