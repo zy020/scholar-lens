@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from pydantic import BaseModel
+import re
+
+from pydantic import BaseModel, Field
 
 from scholar_lens.parsers.models import ParsedDocument
 
@@ -11,6 +13,12 @@ class EnhancementFragment(BaseModel):
     text: str
     quality: str
     reason: str = ""
+    visual_type: str = ""
+    key_observations: list[str] = Field(default_factory=list)
+    formula_summary: str = ""
+    table_summary: str = ""
+    chart_summary: str = ""
+    qa_hint: str = ""
 
 
 def fragments_from_ocr_payload(payload: dict) -> list[EnhancementFragment]:
@@ -35,6 +43,13 @@ def fragments_from_vision_payload(payload: dict) -> list[EnhancementFragment]:
             text=str(page.get("text", "")),
             quality=str(page.get("vision_quality", page.get("quality", "failed"))),
             reason=str(page.get("reason", "")),
+            visual_type=str(page.get("visual_type", "")),
+            key_observations=[str(item) for item in page.get("key_observations", []) if str(item).strip()]
+            if isinstance(page.get("key_observations", []), list) else [],
+            formula_summary=str(page.get("formula_summary", "")),
+            table_summary=str(page.get("table_summary", "")),
+            chart_summary=str(page.get("chart_summary", "")),
+            qa_hint=str(page.get("qa_hint", "")),
         ))
     return fragments
 
@@ -75,14 +90,14 @@ def _usable_fragments_by_page(fragments: list[EnhancementFragment]) -> dict[int,
     for fragment in fragments:
         if fragment.quality == "failed":
             continue
-        if not fragment.text.strip():
+        if not _fragment_text(fragment).strip():
             continue
         grouped.setdefault(fragment.page, []).append(fragment)
     return grouped
 
 
 def _merge_page_text(existing: str, fragment: EnhancementFragment) -> str:
-    text = fragment.text.strip()
+    text = _fragment_text(fragment)
     if fragment.source == "ocr" and (not existing.strip() or len(existing.strip()) < 20):
         return text
     if not existing.strip():
@@ -91,11 +106,37 @@ def _merge_page_text(existing: str, fragment: EnhancementFragment) -> str:
     return f"{existing.rstrip()}\n\n{marker}\n{text}"
 
 
+def _fragment_text(fragment: EnhancementFragment) -> str:
+    if fragment.source != "vision":
+        return fragment.text.strip()
+    lines = [fragment.text.strip()] if fragment.text.strip() else []
+    existing_text = "\n".join(lines)
+    if fragment.visual_type and not _has_structured_label(existing_text, "Visual type"):
+        lines.append(f"Visual type: {fragment.visual_type}")
+    if fragment.key_observations and not _has_structured_label(existing_text, "Key observations"):
+        lines.append("Key observations:")
+        lines.extend(f"- {item}" for item in fragment.key_observations if str(item).strip())
+    for label, value in [
+        ("Formula summary", fragment.formula_summary),
+        ("Table summary", fragment.table_summary),
+        ("Chart summary", fragment.chart_summary),
+        ("QA hint", fragment.qa_hint),
+    ]:
+        value = str(value or "").strip()
+        if value and not _has_structured_label(existing_text, label):
+            lines.append(f"{label}: {value}")
+    return "\n".join(lines).strip()
+
+
+def _has_structured_label(text: str, label: str) -> bool:
+    return bool(re.search(rf"^{re.escape(label)}:", text, flags=re.IGNORECASE | re.MULTILINE))
+
+
 def _select_page_candidate(existing: str, fragments: list[EnhancementFragment]) -> _PageCandidate:
     existing_text = existing.strip()
     candidates = [_PageCandidate(source="parser", text=existing_text, score=_candidate_score(existing_text, "parser", "good"))]
     for fragment in fragments:
-        fragment_text = fragment.text.strip()
+        fragment_text = _fragment_text(fragment)
         candidates.append(_PageCandidate(
             source=fragment.source,
             text=fragment_text,

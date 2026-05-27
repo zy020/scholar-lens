@@ -92,3 +92,76 @@ def test_merge_prefers_vision_over_ocr_for_visual_semantic_candidate():
     assert merged.pages[0].text == "The diagram shows queries, keys, and values flowing into scaled dot-product attention."
     assert merged.pages[0].content_source == "vision"
     assert merged.pages[0].enhanced is True
+
+
+def test_vision_fragment_includes_structured_visual_fields_in_text():
+    doc = ParsedDocument(
+        source_path="slides.pdf",
+        doc_subtype="slides_pdf",
+        pages=[ParsedPage(page_num=4, text="", char_count=0)],
+        raw_text="",
+    )
+    fragment = EnhancementFragment(
+        page=4,
+        source="vision",
+        text="The slide defines scaled dot-product attention.",
+        quality="good",
+        visual_type="formula",
+        key_observations=["Q and K are multiplied"],
+        formula_summary="Attention(Q,K,V)=softmax(QK^T/sqrt(d_k))V",
+        qa_hint="Useful for formula questions.",
+    )
+
+    merged = merge_enhancements(doc, [fragment])
+
+    assert "Visual type: formula" in merged.pages[0].text
+    assert "Formula summary: Attention" in merged.pages[0].text
+    assert "QA hint: Useful for formula questions." in merged.pages[0].text
+
+
+def test_vision_fragment_does_not_duplicate_existing_structured_fields():
+    doc = ParsedDocument(
+        source_path="slides.pdf",
+        doc_subtype="slides_pdf",
+        pages=[ParsedPage(page_num=5, text="", char_count=0)],
+        raw_text="",
+    )
+    fragment = EnhancementFragment(
+        page=5,
+        source="vision",
+        text=(
+            "The slide defines scaled dot-product attention.\n"
+            "Visual type: formula\n"
+            "Formula summary: Attention(Q,K,V)=softmax(QK^T/sqrt(d_k))V"
+        ),
+        quality="good",
+        visual_type="formula",
+        formula_summary="Attention(Q,K,V)=softmax(QK^T/sqrt(d_k))V",
+    )
+
+    merged = merge_enhancements(doc, [fragment])
+
+    assert merged.pages[0].text.count("Visual type: formula") == 1
+    assert merged.pages[0].text.count("Formula summary:") == 1
+
+
+def test_vision_fragment_with_only_structured_fields_is_usable():
+    doc = ParsedDocument(
+        source_path="slides.pdf",
+        doc_subtype="slides_pdf",
+        pages=[ParsedPage(page_num=6, text="", char_count=0)],
+        raw_text="",
+    )
+    fragment = EnhancementFragment(
+        page=6,
+        source="vision",
+        text="",
+        quality="good",
+        visual_type="table",
+        table_summary="Rows compare Transformer and RNN training speed.",
+    )
+
+    merged = merge_enhancements(doc, [fragment])
+
+    assert "Visual type: table" in merged.pages[0].text
+    assert "Table summary: Rows compare Transformer" in merged.pages[0].text

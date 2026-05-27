@@ -377,3 +377,42 @@ class TestSectionAwareChunker:
         assert any("q dot k" in item for item in chunks[0].metadata.formula_ids)
         assert "Formula terms:" in chunks[0].metadata.contextual_prefix
         assert "alpha" in chunks[0].metadata.contextual_prefix
+
+    def test_chunk_metadata_marks_vision_structured_formula_and_table_content(self):
+        doc = ParsedDocument(
+            source_path="slides.pdf",
+            doc_subtype="slides_pdf",
+            pages=[
+                ParsedPage(
+                    page_num=3,
+                    content_source="vision",
+                    enhanced=True,
+                    text=(
+                        "The slide defines scaled dot-product attention.\n"
+                        "Visual type: formula\n"
+                        "Formula summary: Attention(Q,K,V)=softmax(QK^T/sqrt(d_k))V\n"
+                        "QA hint: Useful for formula questions."
+                    ),
+                ),
+                ParsedPage(
+                    page_num=4,
+                    content_source="vision",
+                    enhanced=True,
+                    text=(
+                        "The table compares model accuracy.\n"
+                        "Visual type: table\n"
+                        "Table summary: Model A reaches 91% and Model B reaches 88%."
+                    ),
+                ),
+            ],
+        )
+
+        chunks = SectionAwareChunker().chunk(doc, doc_id="doc1")
+
+        formula_chunk = next(chunk for chunk in chunks if "scaled dot-product" in chunk.text)
+        table_chunk = next(chunk for chunk in chunks if "Model A reaches" in chunk.text)
+        assert formula_chunk.metadata.has_formula is True
+        assert formula_chunk.metadata.content_type == "formula"
+        assert "Vision formula summary" in formula_chunk.metadata.contextual_prefix
+        assert table_chunk.metadata.content_type == "table"
+        assert table_chunk.metadata.caption == "Model A reaches 91% and Model B reaches 88%."

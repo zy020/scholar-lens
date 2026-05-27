@@ -691,6 +691,13 @@ def build_chat_messages(
         question,
         has_formula_evidence=has_formula_evidence,
     )
+    vision_structured_guidance = ""
+    if "Visual type:" in context_text:
+        vision_structured_guidance = (
+            "\nVision-structured evidence guidance: Some visual evidence may be a model-generated description "
+            "of a page image, chart, table, diagram, or formula. Use it as cited evidence, but do not present "
+            "inferred visual interpretation as verbatim source text. If chart/table/formula details are missing, say so.\n"
+        )
     memory_section = ""
     if memory_context.strip():
         personalization = _personalized_guidance(memory_context, student_level=student_level)
@@ -708,6 +715,7 @@ def build_chat_messages(
 {memory_section}
 Student question: {question}
 {formula_guidance}
+{vision_structured_guidance}
 {answer_constraint_guidance}
 
 Answer in Chinese. Preserve key English terms inline when needed, but do not append a glossary, related terms, vocabulary list, or extra terminology section unless the student explicitly asks for one. Use only the evidence items that directly support your answer. Number citations using the provided evidence numbers, for example [1]. Do not cite evidence you did not use. Do not present broader implications, benefits, causes, or mechanisms as document conclusions unless they are directly stated in the cited evidence. If you add helpful general background, put it in a separate sentence explicitly labeled as general background, not as a document claim. If evidence is insufficient, say so."""

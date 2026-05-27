@@ -137,7 +137,8 @@ class SectionAwareChunker:
             )
             for chunk_idx, chunk in enumerate(slide_chunks):
                 chunk.chunk_id = f"{doc_id}_{section_id}_{chunk_idx}" if doc_id else f"{section_id}_{chunk_idx}"
-                chunk.metadata.content_type = "slide"
+                if chunk.metadata.content_type == "text":
+                    chunk.metadata.content_type = "slide"
                 chunk.metadata.section_type = "slide"
                 chunk.metadata.chapter = str(idx + 1)
                 chunks.append(chunk)
@@ -592,11 +593,17 @@ class SectionAwareChunker:
     ) -> Chunk:
         chunk_id = f"{doc_id}_{section_id}_{idx}" if doc_id else f"{section_id}_{idx}"
         math_analysis = analyze_math_text(text)
-        has_formula = self._has_formula(text) or math_analysis.has_formula
+        vision_visual_type = self._vision_visual_type(text)
+        has_formula = self._has_formula(text) or math_analysis.has_formula or vision_visual_type == "formula"
         cross_refs = self._extract_cross_refs(text)
         contextual_prefix = ""
         if math_analysis.has_formula and math_analysis.formula_ids:
             contextual_prefix = f"Formula terms: {'; '.join(math_analysis.formula_ids[:4])}"
+        vision_prefix = self._vision_contextual_prefix(text, vision_visual_type)
+        if vision_prefix:
+            contextual_prefix = f"{contextual_prefix}\n{vision_prefix}".strip()
+        content_type = vision_visual_type if vision_visual_type in {"formula", "table", "chart", "diagram"} else "text"
+        caption = self._vision_caption(text, vision_visual_type)
         return Chunk(
             chunk_id=chunk_id, text=text,
             metadata=ChunkMetadata(
@@ -606,6 +613,8 @@ class SectionAwareChunker:
                 has_formula=has_formula,
                 formula_ids=math_analysis.formula_ids,
                 cross_refs=cross_refs,
+                content_type=content_type,
+                caption=caption,
                 contextual_prefix=contextual_prefix,
                 content_source=content_source,
                 enhanced=enhanced,
@@ -697,6 +706,35 @@ class SectionAwareChunker:
 
     def _has_formula(self, text: str) -> bool:
         return bool(_FORMULA_REGEX.search(text))
+
+    def _vision_visual_type(self, text: str) -> str:
+        match = re.search(r"^Visual type:\s*(formula|table|chart|diagram|mixed)\s*$", text, re.IGNORECASE | re.MULTILINE)
+        return match.group(1).lower() if match else ""
+
+    def _vision_contextual_prefix(self, text: str, visual_type: str) -> str:
+        if not visual_type:
+            return ""
+        summaries = []
+        for label in ("Formula summary", "Table summary", "Chart summary", "QA hint"):
+            value = self._vision_field(text, label)
+            if value:
+                summaries.append(f"{label}: {value}")
+        if not summaries:
+            return f"Vision {visual_type} content"
+        return f"Vision {visual_type} summary: " + " | ".join(summaries[:3])
+
+    def _vision_caption(self, text: str, visual_type: str) -> str:
+        if visual_type == "table":
+            return self._vision_field(text, "Table summary")
+        if visual_type == "chart":
+            return self._vision_field(text, "Chart summary")
+        if visual_type == "formula":
+            return self._vision_field(text, "Formula summary")
+        return ""
+
+    def _vision_field(self, text: str, label: str) -> str:
+        match = re.search(rf"^{re.escape(label)}:\s*(.+)$", text, re.IGNORECASE | re.MULTILINE)
+        return match.group(1).strip() if match else ""
 
     def _extract_cross_refs(self, text: str) -> list[str]:
         return _CROSS_REF_REGEX.findall(text)

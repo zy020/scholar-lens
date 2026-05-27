@@ -910,6 +910,17 @@ def test_build_chat_messages_defaults_to_concise_grounded_answer():
     assert "unless the student explicitly asks" in user_prompt
 
 
+def test_build_chat_messages_marks_vision_structured_evidence_as_model_description():
+    messages = build_chat_messages(
+        question="这个图表说明了什么？",
+        context_text="Visual type: chart\nChart summary: Accuracy rises with data size.",
+    )
+
+    user_prompt = messages[1].content
+    assert "Vision-structured evidence" in user_prompt
+    assert "model-generated description" in user_prompt
+
+
 def test_build_chat_messages_allows_expanded_grounded_answer_when_requested():
     messages = build_chat_messages(
         question="请详细展开解释 CLIP 的图，并举例说明",
