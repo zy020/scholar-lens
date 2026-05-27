@@ -11,7 +11,7 @@ import {
 } from './api'
 import { analysisStatusLabel, parseQualityPageItems, parseQualityStatusLabel, sectionSummaryItems, termPreview } from './analysisPanelUtils'
 import { analyzeStatusText } from './analyzeDocumentUtils'
-import { enhancePlanSummary, enhanceReasonItems, escalationLabels, ocrCapabilityLabel, visionPlanLabel } from './enhancePlanUtils'
+import { enhanceDecisionItems, enhancePlanSummary, enhanceReasonItems, escalationLabels, ocrCapabilityLabel, visionPlanLabel } from './enhancePlanUtils'
 import { briefSectionLabels, briefSourceLabel, briefTitle, formatBriefMarkdown, reviewLevelLabel, reviewQuestionsTitle, textQualityLabel } from './studyBriefUtils'
 
 const ACTION_STATUS_LABELS = {
@@ -196,6 +196,7 @@ export default function NotesPanel({ doc, docId, onDocumentUpdated }) {
   const parseQualityPages = parseQualityPageItems(analysis, 6)
   const enhanceReasons = enhanceReasonItems(enhancePlan)
   const enhanceEscalations = escalationLabels(enhancePlan)
+  const enhanceDecisions = enhanceDecisionItems(enhancePlan)
 
   if (!doc.name) {
     return <div className="notes-panel"><p className="empty">请先上传文档</p></div>
@@ -278,6 +279,15 @@ export default function NotesPanel({ doc, docId, onDocumentUpdated }) {
               <div className="enhance-page-list">
                 {enhanceReasons.map(item => (
                   <span key={item.page} className="enhance-reason-tag">{item.pageLabel}：{item.label}</span>
+                ))}
+              </div>
+            )}
+            {enhanceDecisions.length > 0 && (
+              <div className="enhance-page-list">
+                {enhanceDecisions.map(item => (
+                  <span key={item.key} className="enhance-reason-tag">
+                    {item.pageLabel}：{item.action}{item.reason ? ` / ${item.reason}` : ''}
+                  </span>
                 ))}
               </div>
             )}

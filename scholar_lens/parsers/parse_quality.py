@@ -25,9 +25,11 @@ class ParseUnitQuality(BaseModel):
 def assess_parse_unit_quality(doc: ParsedDocument) -> list[ParseUnitQuality]:
     visual_pages = _visual_pages(doc)
     formula_pages = _formula_pages(doc)
+    table_pages = _table_pages(doc)
+    image_pages = _image_pages(doc)
     qualities = []
     for page in doc.pages:
-        qualities.append(_assess_page(doc, page, visual_pages, formula_pages))
+        qualities.append(_assess_page(doc, page, visual_pages, formula_pages, table_pages, image_pages))
     return qualities
 
 
@@ -77,8 +79,12 @@ def _assess_page(
     page: ParsedPage,
     visual_pages: set[int],
     formula_pages: set[int] | None = None,
+    table_pages: set[int] | None = None,
+    image_pages: set[int] | None = None,
 ) -> ParseUnitQuality:
     formula_pages = formula_pages or set()
+    table_pages = table_pages or set()
+    image_pages = image_pages or set()
     text = page.text or ""
     text_len = page.char_count if page.char_count else len(text)
     expected_chars = _expected_chars(doc.doc_subtype)
@@ -102,6 +108,12 @@ def _assess_page(
         reasons.append("text_low")
     if visual_score >= 0.5:
         reasons.append("visual_high")
+    if page.page_num in formula_pages and text_len < 20:
+        reasons.append("formula_signal")
+    if page.page_num in table_pages and text_len < 40:
+        reasons.append("complex_table_signal")
+    if page.page_num in image_pages and text_len < 20:
+        reasons.append("diagram_signal")
 
     ocr_need_score = 0.0
     if text_score < 0.3:
@@ -171,8 +183,20 @@ def _visual_pages(doc: ParsedDocument) -> set[int]:
 
 
 def _formula_pages(doc: ParsedDocument) -> set[int]:
+    return _pages_from_items(doc.formulas)
+
+
+def _table_pages(doc: ParsedDocument) -> set[int]:
+    return _pages_from_items(doc.tables)
+
+
+def _image_pages(doc: ParsedDocument) -> set[int]:
+    return _pages_from_items(doc.images)
+
+
+def _pages_from_items(items: list[dict]) -> set[int]:
     pages: set[int] = set()
-    for item in doc.formulas:
+    for item in items:
         page = item.get("page", item.get("page_num", item.get("page_start")))
         if isinstance(page, int):
             pages.add(page)

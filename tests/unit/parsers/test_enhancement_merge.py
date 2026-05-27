@@ -59,3 +59,36 @@ def test_merge_ignores_failed_or_empty_fragments():
     assert merged.pages[0].content_source == "parser"
     assert merged.pages[0].enhanced is False
     assert merged.raw_text == "Agenda"
+
+
+def test_merge_keeps_parser_when_ocr_candidate_is_lower_quality():
+    doc = ParsedDocument(
+        source_path="slides.pdf",
+        doc_subtype="slides_pdf",
+        pages=[ParsedPage(page_num=1, text="Clear explanation of self-attention with queries keys and values.", char_count=62)],
+        raw_text="Clear explanation of self-attention with queries keys and values.",
+    )
+    fragment = EnhancementFragment(page=1, source="ocr", text="Q K V ? ? | |", quality="weak")
+
+    merged = merge_enhancements(doc, [fragment])
+
+    assert merged.pages[0].text == "Clear explanation of self-attention with queries keys and values."
+    assert merged.pages[0].content_source == "parser"
+    assert merged.pages[0].enhanced is False
+
+
+def test_merge_prefers_vision_over_ocr_for_visual_semantic_candidate():
+    doc = ParsedDocument(
+        source_path="slides.pdf",
+        doc_subtype="slides_pdf",
+        pages=[ParsedPage(page_num=3, text="", char_count=0)],
+        raw_text="",
+    )
+    ocr = EnhancementFragment(page=3, source="ocr", text="Q K V -> ->", quality="weak")
+    vision = EnhancementFragment(page=3, source="vision", text="The diagram shows queries, keys, and values flowing into scaled dot-product attention.", quality="good")
+
+    merged = merge_enhancements(doc, [ocr, vision])
+
+    assert merged.pages[0].text == "The diagram shows queries, keys, and values flowing into scaled dot-product attention."
+    assert merged.pages[0].content_source == "vision"
+    assert merged.pages[0].enhanced is True

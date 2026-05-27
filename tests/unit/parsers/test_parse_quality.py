@@ -65,6 +65,24 @@ def test_quality_uses_table_and_formula_metadata_as_visual_signal():
     assert qualities[1].recommended_action == "keep"
 
 
+def test_quality_marks_low_text_formula_and_table_pages_for_visual_semantic_decision():
+    doc = ParsedDocument(
+        source_path="slides.pdf",
+        doc_subtype="slides_pdf",
+        pages=[
+            ParsedPage(page_num=1, text="", char_count=0),
+            ParsedPage(page_num=2, text="", char_count=0),
+        ],
+        formulas=[{"page": 1, "text": "large equation image"}],
+        tables=[{"page": 2, "kind": "table"}],
+    )
+
+    qualities = assess_parse_unit_quality(doc)
+
+    assert "formula_signal" in qualities[0].reasons
+    assert "complex_table_signal" in qualities[1].reasons
+
+
 def test_recommend_ocr_from_quality_keeps_existing_api_shape():
     doc = ParsedDocument(
         source_path="slides.pdf",

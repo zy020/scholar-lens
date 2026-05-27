@@ -156,6 +156,7 @@ class EnhancePlanResponse(BaseModel):
     vision_enhancement_enabled: bool = False
     vision_possible: bool = False
     vision_escalation_reasons: list[str] = Field(default_factory=list)
+    page_decisions: list[dict] = Field(default_factory=list)
     message: str = ""
 
 

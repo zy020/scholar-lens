@@ -6,6 +6,19 @@ const REASON_LABELS = {
   garbled_text: 'OCR 文本疑似乱码',
   diagram_like: '图表/流程图需要语义理解',
   pptx_no_embedded_images: 'PPTX 当前页无可增强的嵌入图片',
+  sparse_but_structured: '内容少但结构完整',
+  ocr_readable_gain: 'OCR 可读文本明显提升',
+  visual_semantics_need_vision: '需要理解图表/公式等视觉语义',
+  ocr_first_for_visual_text: '优先提取图片文字',
+  ocr_probe_failed_visual_high: 'OCR 效果差且页面视觉复杂',
+  parser_recommends_ocr: '解析质量偏低',
+}
+
+const ACTION_LABELS = {
+  use_original: '无需增强',
+  apply_ocr: '建议 OCR',
+  apply_vision: '建议 Vision',
+  apply_ocr_then_maybe_vision: '先 OCR，必要时 Vision',
 }
 
 export function enhancePlanSummary(plan) {
@@ -46,6 +59,17 @@ export function escalationLabels(plan, limit = 4) {
   return (plan?.vision_escalation_reasons || [])
     .slice(0, limit)
     .map(reason => REASON_LABELS[reason] || reason)
+}
+
+export function enhanceDecisionItems(plan, limit = 8) {
+  return (plan?.page_decisions || [])
+    .slice(0, limit)
+    .map(item => ({
+      key: `${item.page}-${item.action}`,
+      pageLabel: formatPageLabel(item.page),
+      action: ACTION_LABELS[item.action] || item.action || '增强判断',
+      reason: REASON_LABELS[item.reason] || item.reason || '',
+    }))
 }
 
 export function formatPageLabel(page) {

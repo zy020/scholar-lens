@@ -15,6 +15,7 @@ from scholar_lens.api.document_analysis import AnalysisRunResult
 from scholar_lens.api.schemas import DocumentStatus, SectionSummary
 from scholar_lens.core.settings import Settings
 from scholar_lens.parsers.models import Chunk, ChunkMetadata, ParsedDocument
+from scholar_lens.parsers.parse_quality import ParseUnitQuality
 from scholar_lens.rag.document_store import DocumentStore
 from tests.unit.api.helpers import ASGITestClient
 
@@ -472,6 +473,69 @@ class TestDocumentRoutes:
         assert data["ocr_cpu_available"] is True
         assert data["ocr_recommended_mode"] == "ask_user"
         assert data["available_actions"] == ["cpu_ocr", "vision"]
+
+    def test_enhance_plan_includes_page_decisions_from_quality_and_ocr_probe(self, client, monkeypatch):
+        store = documents._store
+        doc = store.create_document("slides.pdf")
+        store.update_summary(doc.doc_id, ocr_recommended_pages=[2])
+        store.save_parse_quality(doc.doc_id, [
+            ParseUnitQuality(
+                unit_id="page_2",
+                unit_type="slide",
+                page_start=2,
+                page_end=2,
+                text_score=0.1,
+                structure_score=0.3,
+                visual_score=0.7,
+                ocr_need_score=0.8,
+                overall_score=0.2,
+                quality="failed",
+                recommended_action="ocr",
+                reasons=["text_low", "visual_high"],
+            )
+        ])
+        store.save_ocr_enhancement(doc.doc_id, {
+            "pages": [
+                {"page": 2, "text": "Self-attention maps queries to keys and values. " * 3, "ocr_quality": "good"},
+            ]
+        })
+
+        r = client.post(f"/api/documents/{doc.doc_id}/enhance-plan")
+
+        assert r.status_code == 200
+        data = r.json()
+        assert data["page_decisions"][0]["page"] == 2
+        assert data["page_decisions"][0]["action"] == "apply_ocr"
+        assert data["page_decisions"][0]["reason"] == "ocr_readable_gain"
+
+    def test_enhance_plan_does_not_fallback_to_stale_ocr_pages_when_quality_keeps_page(self, client):
+        store = documents._store
+        doc = store.create_document("slides.pdf")
+        store.update_summary(doc.doc_id, ocr_recommended_pages=[1])
+        store.save_parse_quality(doc.doc_id, [
+            ParseUnitQuality(
+                unit_id="page_1",
+                unit_type="slide",
+                page_start=1,
+                page_end=1,
+                text_score=0.1,
+                structure_score=0.4,
+                visual_score=0.0,
+                ocr_need_score=0.0,
+                overall_score=0.3,
+                quality="failed",
+                recommended_action="keep",
+                reasons=["text_low", "sparse_but_structured"],
+            )
+        ])
+
+        r = client.post(f"/api/documents/{doc.doc_id}/enhance-plan")
+
+        assert r.status_code == 200
+        data = r.json()
+        assert data["recommended_ocr_pages"] == []
+        assert data["status"] == "skipped"
+        assert data["page_decisions"][0]["action"] == "use_original"
 
     def test_enhance_plan_404_for_missing_doc(self, client):
         r = client.post("/api/documents/missing/enhance-plan")

@@ -555,6 +555,16 @@ async def _upload_document_with_kind(file: UploadFile, document_kind: str) -> Do
 
 
 def _vision_pages_from_policy(store: DocumentStore, doc_id: str, llm_quality_response: ParseQualityResponse | None = None) -> list[int]:
+    from scholar_lens.parsers.enhancement_decision import build_enhancement_decisions, vision_pages_from_decisions
+
+    decision_pages = vision_pages_from_decisions(build_enhancement_decisions(
+        store.load_parse_quality(doc_id),
+        ocr_payload=store.load_ocr_enhancement(doc_id),
+        vision_enabled=True,
+    ))
+    if decision_pages:
+        return decision_pages
+
     pages: list[int] = []
     ocr_payload = store.load_ocr_enhancement(doc_id)
     for page in ocr_payload.get("vision_recommended_pages", []) if ocr_payload else []:
@@ -723,13 +733,27 @@ async def get_enhance_plan(doc_id: str):
     )
     vision_enhancement_enabled = bool(getattr(settings, "vision_enhancement_enabled", False))
     ocr_capability = detect_rapidocr_capability(vision_available=vision_available)
-    recommended_pages = doc.ocr_recommended_pages
+    from scholar_lens.parsers.enhancement_decision import (
+        build_enhancement_decisions,
+        ocr_pages_from_decisions,
+        vision_pages_from_decisions,
+    )
+
+    qualities = store.load_parse_quality(doc_id)
+    decisions = build_enhancement_decisions(
+        qualities,
+        ocr_payload=store.load_ocr_enhancement(doc_id),
+        vision_enabled=vision_available and vision_enhancement_enabled,
+    )
+    decision_ocr_pages = ocr_pages_from_decisions(decisions)
+    decision_vision_pages = vision_pages_from_decisions(decisions)
+    recommended_pages = decision_ocr_pages if qualities else doc.ocr_recommended_pages
     escalation_reasons = [
         "ocr_too_short_visual_high",
         "garbled_text",
         "diagram_like",
     ]
-    status = "planned" if recommended_pages else "skipped"
+    status = "planned" if (recommended_pages or decision_vision_pages) else "skipped"
     source = store.source_path(doc_id)
     pptx_scope_note = (
         " For PPTX, lightweight OCR/Vision only processes embedded slide images; text boxes and shapes are handled by the PPTX parser."
@@ -750,12 +774,13 @@ async def get_enhance_plan(doc_id: str):
         available_actions=ocr_capability.available_actions,
         vision_available=vision_available,
         vision_enhancement_enabled=vision_enhancement_enabled,
-        vision_possible=vision_available and vision_enhancement_enabled and bool(recommended_pages),
+        vision_possible=vision_available and vision_enhancement_enabled and bool(decision_vision_pages or recommended_pages),
         vision_escalation_reasons=escalation_reasons,
+        page_decisions=[decision.model_dump() for decision in decisions],
         message=(
             "OCR enhancement is recommended for selected pages; Vision may be used after OCR quality evaluation."
             + pptx_scope_note
-            if recommended_pages
+            if recommended_pages or decision_vision_pages
             else "No OCR enhancement is currently recommended." + pptx_scope_note
         ),
     )
@@ -811,11 +836,19 @@ async def enhance_with_vision(doc_id: str):
         return response
 
     ocr_payload = store.load_ocr_enhancement(doc_id)
-    pages = [
-        int(page)
-        for page in ocr_payload.get("vision_recommended_pages", [])
-        if isinstance(page, int) or (isinstance(page, str) and page.isdigit())
-    ]
+    from scholar_lens.parsers.enhancement_decision import build_enhancement_decisions, vision_pages_from_decisions
+
+    pages = vision_pages_from_decisions(build_enhancement_decisions(
+        store.load_parse_quality(doc_id),
+        ocr_payload=ocr_payload,
+        vision_enabled=True,
+    ))
+    if not pages:
+        pages = [
+            int(page)
+            for page in ocr_payload.get("vision_recommended_pages", [])
+            if isinstance(page, int) or (isinstance(page, str) and page.isdigit())
+        ]
     if not pages:
         pages = list(doc.ocr_recommended_pages)
     if not pages:
