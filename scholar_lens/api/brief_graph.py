@@ -14,7 +14,7 @@ from scholar_lens.api.brief_builder import (
 from scholar_lens.api.schemas import PaperBriefResponse, SectionSummary
 
 
-LECTURE_DOC_TYPES = {"slides_pdf", "courseware_pptx", "lecture_slide", "courseware"}
+LECTURE_DOC_TYPES = {"slides_pdf", "lecture_slide", "courseware"}
 
 
 class BriefGenerationGraphState(TypedDict, total=False):

@@ -1,20 +1,9 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import { streamChat } from './api'
-import {
-  getCitedEvidenceView,
-  getEvidenceCardId,
-  getEvidenceToggleLabel,
-  getOriginalIndexForDisplayCitation,
-  normalizeCitationText,
-} from './chatEvidence'
 import 'katex/dist/katex.min.css'
-
-function CitationMarker({ num, onClick }) {
-  return <sup className="citation-marker" onClick={onClick}>[{num}]</sup>
-}
 
 function MarkdownBlock({ text }) {
   if (!text) return null
@@ -23,37 +12,6 @@ function MarkdownBlock({ text }) {
       {text}
     </ReactMarkdown>
   )
-}
-
-function numberSections(sections) {
-  if (!sections || !sections.length) return []
-  const counters = []
-  return sections.map((section) => {
-    const level = Math.max(1, Number(section.level || 1))
-    counters[level - 1] = (counters[level - 1] || 0) + 1
-    counters.length = level
-    return {
-      ...section,
-      displayNumber: counters.slice(0, level).join('.'),
-    }
-  })
-}
-
-function cleanSectionLabel(sectionId, docId, numberedSections) {
-  if (!sectionId) return ''
-  const slideMatch = String(sectionId).match(/^slide_(\d+)$/)
-  if (slideMatch) return `Slide ${Number(slideMatch[1]) + 1}`
-  if (numberedSections && numberedSections.length) {
-    const sec = numberedSections.find(s => s.section_id === sectionId)
-    if (sec && sec.displayNumber) {
-      return `${sec.displayNumber} ${sec.title}`
-    }
-    if (sec) return sec.title || '当前章节'
-  }
-  const stripped = docId ? sectionId.replace(docId + '_', '') : sectionId
-  if (/^\d+$/.test(stripped)) return `章节 ${Number(stripped) + 1}`
-  if (/^[a-z]+_[a-f0-9]{8,}/i.test(stripped) || /^[a-f0-9]{8,}$/i.test(stripped)) return '相关章节'
-  return stripped || '相关章节'
 }
 
 function documentStatusLabel(status) {
@@ -68,17 +26,15 @@ function documentStatusLabel(status) {
   return labels[status] || '正在处理'
 }
 
-export default function ChatPanel({ doc, activeSectionId, sectionTitle, sections }) {
+export default function ChatPanel({ doc, activeSectionId, sectionTitle }) {
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
   const [status, setStatus] = useState('')
   const [deepMode, setDeepMode] = useState(false)
-  const [expandedEvidence, setExpandedEvidence] = useState({})
   const bottomRef = useRef(null)
   const abortRef = useRef(null)
   const bufferRef = useRef({ text: '', timer: null, assistantIdx: -1 })
-  const numberedSections = useMemo(() => numberSections(sections || []), [sections])
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
@@ -97,22 +53,7 @@ export default function ChatPanel({ doc, activeSectionId, sectionTitle, sections
     abortRef.current?.abort()
     setMessages([])
     setStatus('')
-    setExpandedEvidence({})
     bufferRef.current = { text: '', timer: null, assistantIdx: -1 }
-  }
-
-  const toggleEvidence = (msgIdx) => {
-    setExpandedEvidence(prev => ({ ...prev, [msgIdx]: !prev[msgIdx] }))
-  }
-
-  const handleCitationClick = (msgIdx, displayIndex, citedEvidence) => {
-    const originalIndex = getOriginalIndexForDisplayCitation(displayIndex, citedEvidence)
-    if (originalIndex == null) return
-    setExpandedEvidence(prev => ({ ...prev, [msgIdx]: true }))
-    setTimeout(() => {
-      const card = document.getElementById(getEvidenceCardId(msgIdx, originalIndex))
-      if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    }, 100)
   }
 
   const send = async () => {
@@ -186,19 +127,6 @@ export default function ChatPanel({ doc, activeSectionId, sectionTitle, sections
 
   const stopChat = () => abortRef.current?.abort()
 
-  const renderContent = (text, msgIdx, citedEvidence) => {
-    if (!text) return ''
-    const parts = text.split(/(\[\d+\])/g)
-    return parts.map((part, i) => {
-      const m = part.match(/^\[(\d+)\]$/)
-      if (m) {
-        const num = parseInt(m[1], 10)
-        return <CitationMarker key={i} num={num} onClick={() => handleCitationClick(msgIdx, num, citedEvidence)} />
-      }
-      return <span key={i} className="markdown-inline"><MarkdownBlock text={part} /></span>
-    })
-  }
-
   return (
     <div className="chat-panel">
       <div className="chat-toolbar">
@@ -221,63 +149,15 @@ export default function ChatPanel({ doc, activeSectionId, sectionTitle, sections
               : '请先上传文档'}
           </p>
         )}
-        {messages.map((msg, i) => {
-          const citedEvidence = getCitedEvidenceView(msg.content || '', msg.evidence || [])
-          const normalizedContent = normalizeCitationText(
-            msg.content || '',
-            citedEvidence.map(e => e.originalIndex),
-          )
-          const hasEvidence = msg.evidence?.length > 0
-          const isExpanded = expandedEvidence[i] || false
-          const showEvidenceToggle = hasEvidence && !isExpanded
-          const showEvidenceCards = hasEvidence && isExpanded
-
-          return (
+        {messages.map((msg, i) => (
             <div key={i} className={`msg ${msg.role}`}>
               <div className="msg-content">
                 {msg.content
-                  ? renderContent(normalizedContent, i, citedEvidence)
+                  ? <MarkdownBlock text={msg.content} />
                   : (streaming && i === messages.length - 1 ? (status || '...') : '')}
               </div>
-              {msg.role === 'assistant' && hasEvidence && (
-                <div className="evidence">
-                  {showEvidenceToggle && (
-                    <button className="evidence-toggle" onClick={() => toggleEvidence(i)}>
-                      {getEvidenceToggleLabel(citedEvidence.length, msg.evidence.length)}
-                    </button>
-                  )}
-                  {showEvidenceCards && (
-                    <>
-                      <div className="evidence-header">
-                        <span className="evidence-label">原文证据</span>
-                        <button className="evidence-collapse-btn" onClick={() => toggleEvidence(i)}>收起</button>
-                      </div>
-                      {citedEvidence.length > 0 && (
-                        <div className="evidence-cited">
-                          {citedEvidence.map((e, j) => (
-                            <div key={j}
-                                 className="evidence-card"
-                                 id={getEvidenceCardId(i, e.originalIndex)}>
-                              <div className="evidence-meta">
-                                <span className="evidence-ref">[{e.displayIndex}]</span>
-                                <span className="evidence-source">章节：{cleanSectionLabel(e.section_id, doc.doc_id, numberedSections)}</span>
-                                {e.page != null && <span className="evidence-page">· 第 {Number(e.page) + 1} 页</span>}
-                              </div>
-                              <blockquote>{e.quote?.slice(0, 250)}{(e.quote?.length || 0) > 250 ? '...' : ''}</blockquote>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      {citedEvidence.length === 0 && (
-                        <p className="evidence-uncited">检索到 {msg.evidence.length} 条证据，但回答未显式引用</p>
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
             </div>
-          )
-        })}
+        ))}
         <div ref={bottomRef} />
       </div>
       <div className="chat-input">

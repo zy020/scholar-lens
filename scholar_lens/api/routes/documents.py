@@ -32,21 +32,28 @@ from scholar_lens.api.document_analysis import build_analysis_response, enhance_
 from scholar_lens.api.memory_events import record_memory_event
 from scholar_lens.parsers.ocr_capabilities import detect_rapidocr_capability
 from scholar_lens.rag.document_store import DocumentStore
-from scholar_lens.rag.vector_index import index_document_chunks
+from scholar_lens.rag.vector_index import delete_document_vectors, index_document_chunks
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 MAX_UPLOAD_SIZE_BYTES = 100 * 1024 * 1024
-SUPPORTED_UPLOAD_SUFFIXES = {".pdf", ".pptx"}
+SUPPORTED_UPLOAD_SUFFIXES = {".pdf"}
 PAPER_UPLOAD_SUFFIXES = {".pdf"}
-COURSEWARE_UPLOAD_SUFFIXES = {".pdf", ".pptx"}
-PPTX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+COURSEWARE_UPLOAD_SUFFIXES = {".pdf"}
 
 _store: DocumentStore | None = None
 
 
 def _get_store() -> DocumentStore:
     return _store if _store is not None else get_document_store()
+
+
+def _safe_memory_manager():
+    try:
+        return get_memory_manager()
+    except Exception:
+        logger.warning("Memory manager unavailable; continuing without memory updates", exc_info=True)
+        return None
 
 
 async def evaluate_parse_quality_with_llm(
@@ -336,7 +343,7 @@ def _courseware_section_summaries(parsed, doc_id: str) -> list[SectionSummary]:
 
 def _build_sections_and_chunks(parsed, chunker, doc_id: str) -> tuple[list[SectionSummary], list]:
     toc_sections = parsed.sections or []
-    if parsed.doc_subtype in {"slides_pdf", "courseware_pptx"}:
+    if parsed.doc_subtype == "slides_pdf":
         sections = _courseware_section_summaries(parsed, doc_id)
         chunks = chunker.chunk(parsed, doc_id=doc_id)
     elif toc_sections and parsed.pages:
@@ -468,11 +475,11 @@ def _forced_doc_subtype(suffix: str, document_kind: str) -> str:
         return "research_paper"
     if document_kind == "courseware":
         if suffix not in COURSEWARE_UPLOAD_SUFFIXES:
-            raise HTTPException(status_code=415, detail="Courseware uploads accept PDF or PPTX files only")
-        return "courseware_pptx" if suffix == ".pptx" else "slides_pdf"
+            raise HTTPException(status_code=415, detail="Courseware uploads accept PDF files only")
+        return "slides_pdf"
     if suffix not in SUPPORTED_UPLOAD_SUFFIXES:
-        raise HTTPException(status_code=415, detail="Only PDF or PPTX files are accepted")
-    return "courseware_pptx" if suffix == ".pptx" else "research_paper"
+        raise HTTPException(status_code=415, detail="Only PDF files are accepted")
+    return "research_paper"
 
 
 def _coerce_parsed_subtype(parsed, forced_subtype: str):
@@ -502,10 +509,9 @@ async def _upload_document_with_kind(file: UploadFile, document_kind: str) -> Do
     try:
         store.update_status(doc.doc_id, DocumentStatus.parsing)
         from scholar_lens.parsers.pdf_parser import PDFParser
-        from scholar_lens.parsers.ppt_parser import PPTParser
         from scholar_lens.parsers.chunker import SectionAwareChunker
 
-        parser = PPTParser() if suffix == ".pptx" else PDFParser()
+        parser = PDFParser()
         parsed = _coerce_parsed_subtype(parser.parse(source), forced_subtype)
         store.save_parsed_document(doc.doc_id, parsed)
 
@@ -541,7 +547,7 @@ async def _upload_document_with_kind(file: UploadFile, document_kind: str) -> Do
             diagnostic_notes=text_diag["diagnostic_notes"],
             index_status=index_status,
         )
-        await _auto_enhance_after_upload(store, doc.doc_id, settings=get_settings())
+        await _auto_gpu_ocr_after_upload(store, doc.doc_id, settings=get_settings())
         store.update_status(doc.doc_id, DocumentStatus.ready)
 
         doc = store.get(doc.doc_id) or doc
@@ -554,41 +560,6 @@ async def _upload_document_with_kind(file: UploadFile, document_kind: str) -> Do
         return doc
 
 
-def _vision_pages_from_policy(store: DocumentStore, doc_id: str, llm_quality_response: ParseQualityResponse | None = None) -> list[int]:
-    from scholar_lens.parsers.enhancement_decision import build_enhancement_decisions, vision_pages_from_decisions
-
-    decision_pages = vision_pages_from_decisions(build_enhancement_decisions(
-        store.load_parse_quality(doc_id),
-        ocr_payload=store.load_ocr_enhancement(doc_id),
-        vision_enabled=True,
-    ))
-    if decision_pages:
-        return decision_pages
-
-    pages: list[int] = []
-    ocr_payload = store.load_ocr_enhancement(doc_id)
-    for page in ocr_payload.get("vision_recommended_pages", []) if ocr_payload else []:
-        if isinstance(page, int):
-            pages.append(page)
-        elif isinstance(page, str) and page.isdigit():
-            pages.append(int(page))
-    if llm_quality_response is not None:
-        for item in llm_quality_response.qualities:
-            if item.get("recommended_action") != "vision":
-                continue
-            page = item.get("page_start")
-            if isinstance(page, int):
-                pages.append(page)
-            elif isinstance(page, str) and page.isdigit():
-                pages.append(int(page))
-            else:
-                unit_id = str(item.get("unit_id", ""))
-                match = re.search(r"(\d+)$", unit_id)
-                if match:
-                    pages.append(int(match.group(1)))
-    return sorted(dict.fromkeys(pages))
-
-
 def _payload_has_usable_enhancement_text(payload: dict, quality_key: str) -> bool:
     for page in payload.get("pages", []):
         if str(page.get(quality_key, page.get("quality", "failed"))) == "failed":
@@ -598,69 +569,31 @@ def _payload_has_usable_enhancement_text(payload: dict, quality_key: str) -> boo
     return False
 
 
-async def _auto_enhance_after_upload(store: DocumentStore, doc_id: str, settings) -> None:
+async def _auto_gpu_ocr_after_upload(store: DocumentStore, doc_id: str, settings) -> None:
     doc = store.get(doc_id)
-    if doc is None:
+    if doc is None or not bool(getattr(settings, "auto_ocr_enabled", True)):
+        return
+    if not doc.ocr_recommended_pages:
         return
 
-    has_enhancement_payload = False
-    llm_quality_response: ParseQualityResponse | None = None
+    try:
+        ocr_response = await run_rapidocr_enhancement(store, doc_id, mode="auto")
+        store.save_ocr_enhancement(doc_id, ocr_response)
+    except Exception as exc:
+        logger.warning("Automatic GPU OCR enhancement failed for %s", doc_id, exc_info=True)
+        store.save_ocr_enhancement(doc_id, OCREnhanceResponse(
+            doc_id=doc_id,
+            status="failed",
+            message="Automatic GPU OCR enhancement failed.",
+            error=str(exc),
+        ))
+        return
 
-    if bool(getattr(settings, "auto_ocr_enabled", True)) and doc.ocr_recommended_pages:
-        try:
-            ocr_response = await run_rapidocr_enhancement(store, doc_id, mode="auto")
-            store.save_ocr_enhancement(doc_id, ocr_response)
-            has_enhancement_payload = _payload_has_usable_enhancement_text(
-                ocr_response.model_dump(),
-                "ocr_quality",
-            )
-        except Exception as exc:
-            logger.warning("Automatic OCR enhancement failed for %s", doc_id, exc_info=True)
-            store.save_ocr_enhancement(doc_id, OCREnhanceResponse(
-                doc_id=doc_id,
-                status="failed",
-                message="Automatic OCR enhancement failed.",
-                error=str(exc),
-            ))
-
-    if bool(getattr(settings, "llm_quality_enabled", False)):
-        try:
-            llm_quality_response = await evaluate_parse_quality_with_llm(store, doc_id, settings=settings)
-            if llm_quality_response.qualities:
-                store.save_parse_quality(doc_id, llm_quality_response.qualities)
-        except Exception:
-            logger.warning("Automatic LLM parse quality evaluation failed for %s", doc_id, exc_info=True)
-
-    vision_ready = bool(
-        getattr(settings, "vision_enhancement_enabled", False)
-        and getattr(settings, "vision_api_key", "")
-        and getattr(settings, "vision_base_url", "")
-        and getattr(settings, "vision_model", "")
-    )
-    if vision_ready:
-        pages = _vision_pages_from_policy(store, doc_id, llm_quality_response=llm_quality_response)
-        if pages:
-            try:
-                vision_response = await run_vision_enhancement(store, doc_id, pages=pages, settings=settings)
-                store.save_vision_enhancement(doc_id, vision_response)
-                has_enhancement_payload = has_enhancement_payload or _payload_has_usable_enhancement_text(
-                    vision_response.model_dump(),
-                    "vision_quality",
-                )
-            except Exception as exc:
-                logger.warning("Automatic Vision enhancement failed for %s", doc_id, exc_info=True)
-                store.save_vision_enhancement(doc_id, VisionEnhanceResponse(
-                    doc_id=doc_id,
-                    status="failed",
-                    message="Automatic Vision enhancement failed.",
-                    error=str(exc),
-                ))
-
-    if has_enhancement_payload:
+    if _payload_has_usable_enhancement_text(ocr_response.model_dump(), "ocr_quality"):
         try:
             await apply_enhancement(doc_id)
         except Exception:
-            logger.warning("Automatic enhancement apply failed for %s", doc_id, exc_info=True)
+            logger.warning("Automatic GPU OCR apply failed for %s", doc_id, exc_info=True)
 
 
 @router.post("/upload/paper", response_model=DocumentSummary)
@@ -708,7 +641,7 @@ async def analyze_document(doc_id: str, force: bool = Query(False)):
         store,
         doc_id,
         settings=get_settings(),
-        memory_manager=get_memory_manager(),
+        memory_manager=_safe_memory_manager(),
     )
     return DocumentAnalysisResponse(
         doc_id=result.doc_id,
@@ -754,12 +687,6 @@ async def get_enhance_plan(doc_id: str):
         "diagram_like",
     ]
     status = "planned" if (recommended_pages or decision_vision_pages) else "skipped"
-    source = store.source_path(doc_id)
-    pptx_scope_note = (
-        " For PPTX, lightweight OCR/Vision only processes embedded slide images; text boxes and shapes are handled by the PPTX parser."
-        if source.suffix.lower() == ".pptx"
-        else ""
-    )
     return EnhancePlanResponse(
         doc_id=doc_id,
         status=status,
@@ -779,9 +706,8 @@ async def get_enhance_plan(doc_id: str):
         page_decisions=[decision.model_dump() for decision in decisions],
         message=(
             "OCR enhancement is recommended for selected pages; Vision may be used after OCR quality evaluation."
-            + pptx_scope_note
             if recommended_pages or decision_vision_pages
-            else "No OCR enhancement is currently recommended." + pptx_scope_note
+            else "No OCR enhancement is currently recommended."
         ),
     )
 
@@ -1042,16 +968,27 @@ async def get_section_text(doc_id: str, section_id: str):
                 page = next((item for item in parsed.pages if item.page_num == page_num), None)
                 if page is not None:
                     text = (page.text or "").strip()
+            if not text and section.page_start is not None:
+                start = int(section.page_start)
+                end = int(section.page_end) if section.page_end is not None else start
+                page_texts = [
+                    (page.text or "").strip()
+                    for page in parsed.pages
+                    if start <= page.page_num <= end and (page.text or "").strip()
+                ]
+                text = "\n\n".join(page_texts).strip()
     if not text and section.gist:
         text = section.gist
 
-    await record_memory_event(
-        get_memory_manager(),
-        "section_read",
-        doc_id=doc_id,
-        section_id=section_id,
-        payload={"title": section.title, "num_chunks": len(matching_chunks)},
-    )
+    memory_manager = _safe_memory_manager()
+    if memory_manager is not None:
+        await record_memory_event(
+            memory_manager,
+            "section_read",
+            doc_id=doc_id,
+            section_id=section_id,
+            payload={"title": section.title, "num_chunks": len(matching_chunks)},
+        )
 
     return {
         "doc_id": doc_id,
@@ -1070,8 +1007,7 @@ async def get_file(doc_id: str):
     source = store.source_path(doc_id)
     if not source.exists():
         raise HTTPException(status_code=404, detail="Source file not found")
-    media_type = PPTX_MEDIA_TYPE if source.suffix.lower() == ".pptx" else "application/pdf"
-    return FileResponse(source, media_type=media_type)
+    return FileResponse(source, media_type="application/pdf")
 
 
 @router.delete("/{doc_id}")
@@ -1079,5 +1015,12 @@ async def delete_document(doc_id: str):
     store = _get_store()
     if store.get(doc_id) is None:
         raise HTTPException(status_code=404, detail="Document not found")
+    delete_document_vectors(doc_id, get_settings())
+    memory_manager = _safe_memory_manager()
+    if memory_manager is not None:
+        try:
+            await memory_manager.clear_document_memory(doc_id)
+        except Exception:
+            logger.warning("Memory cleanup failed for document %s", doc_id, exc_info=True)
     store.delete(doc_id)
     return {"status": "deleted", "doc_id": doc_id}

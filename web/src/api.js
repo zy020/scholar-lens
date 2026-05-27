@@ -60,13 +60,14 @@ export async function getSectionText(docId, sectionId) {
   return handleError(res).then(r => r.json())
 }
 
-export async function analyzeDocument(docId) {
-  const res = await fetch(`${BASE}/documents/${docId}/analyze`, { method: 'POST' })
+export async function getDocumentAnalysis(docId) {
+  const res = await fetch(`${BASE}/documents/${docId}/analysis`)
   return handleError(res).then(r => r.json())
 }
 
-export async function getDocumentAnalysis(docId) {
-  const res = await fetch(`${BASE}/documents/${docId}/analysis`)
+export async function evaluateParseQuality(docId, useLlm = false) {
+  const suffix = useLlm ? '?use_llm=true' : ''
+  const res = await fetch(`${BASE}/documents/${docId}/quality/evaluate${suffix}`, { method: 'POST' })
   return handleError(res).then(r => r.json())
 }
 

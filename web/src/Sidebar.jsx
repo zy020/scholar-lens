@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 
 export default function Sidebar({ docs, active, setActive, onUpload, onDelete, uploading }) {
   const [dark, setDark] = useState(() => localStorage.getItem('theme') === 'dark')
+  const [uploadKind, setUploadKind] = useState('paper')
 
   useEffect(() => {
     document.body.className = dark ? 'dark' : ''
@@ -13,13 +14,13 @@ export default function Sidebar({ docs, active, setActive, onUpload, onDelete, u
       <div className="logo">ScholarLens</div>
 
       <div className="upload-group">
+        <div className="upload-kind">
+          <button type="button" className={uploadKind === 'paper' ? 'active' : ''} onClick={() => setUploadKind('paper')}>论文</button>
+          <button type="button" className={uploadKind === 'courseware' ? 'active' : ''} onClick={() => setUploadKind('courseware')}>课件</button>
+        </div>
         <label className="upload-btn">
-          {uploading ? '上传中...' : '上传论文 PDF'}
-          <input type="file" accept=".pdf" multiple onChange={(e) => onUpload(e, 'paper')} hidden />
-        </label>
-        <label className="upload-btn">
-          {uploading ? '上传中...' : '上传课件 PDF/PPTX'}
-          <input type="file" accept=".pdf,.pptx" multiple onChange={(e) => onUpload(e, 'courseware')} hidden />
+          {uploading ? '上传中...' : `上传${uploadKind === 'paper' ? '论文' : '课件'} PDF`}
+          <input type="file" accept=".pdf" multiple disabled={uploading} onChange={(e) => onUpload(e, uploadKind)} hidden />
         </label>
       </div>
 

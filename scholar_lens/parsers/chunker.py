@@ -24,7 +24,7 @@ _CROSS_REF_PATTERNS = [
     r"(?:see\s+)?(?:Section\.?\s*[\d.]+)",
 ]
 _CROSS_REF_REGEX = re.compile("|".join(_CROSS_REF_PATTERNS), re.IGNORECASE)
-COURSEWARE_DOC_TYPES = {"slides_pdf", "courseware_pptx"}
+COURSEWARE_DOC_TYPES = {"slides_pdf"}
 
 
 @dataclass(frozen=True)
@@ -50,7 +50,6 @@ class SemanticStrategy:
 DEFAULT_CHUNKING_POLICIES = {
     "research_paper": ChunkingPolicy(max_chunk_tokens=800, overlap_tokens=100),
     "slides_pdf": ChunkingPolicy(max_chunk_tokens=500, overlap_tokens=50),
-    "courseware_pptx": ChunkingPolicy(max_chunk_tokens=500, overlap_tokens=50),
 }
 DEFAULT_CHUNKING_POLICY = DEFAULT_CHUNKING_POLICIES["research_paper"]
 PAPER_SEMANTIC_STRATEGY = SemanticStrategy(

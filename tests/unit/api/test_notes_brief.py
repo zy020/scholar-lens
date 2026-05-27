@@ -133,7 +133,6 @@ def test_brief_endpoint_uses_brief_specific_timeout(tmp_path, monkeypatch):
       "motivation": "降低阅读门槛。",
       "contributions": [{"claim": "结构化总结", "why_it_matters": "便于复习"}],
       "method_walkthrough": [{"title": "Brief generation", "explanation": "抽取章节和证据。"}],
-      "key_terms": [{"term": "RAG", "explanation_zh": "检索增强生成"}],
       "reading_focus": [{"section_id": "intro", "section_title": "Introduction", "reason": "理解问题"}],
       "review_questions": [{"question": "核心问题是什么？", "level": "basic"}],
       "limitations": ["需要人工核对。"]
@@ -178,7 +177,6 @@ def test_parse_llm_brief_json_normalizes_required_fields():
       "motivation": "降低计算成本。",
       "contributions": [{"claim": "提出稀疏 attention block", "why_it_matters": "降低复杂度"}],
       "method_walkthrough": [{"title": "Sparse block", "explanation": "减少注意力连接。"}],
-      "key_terms": [{"term": "self-attention", "explanation_zh": "自注意力机制"}],
       "reading_focus": [{"section_id": "method", "section_title": "Method", "reason": "理解方法"}],
       "review_questions": [{"question": "方法核心是什么？", "level": "basic"}],
       "limitations": ["未验证超长文本。"]
@@ -189,7 +187,7 @@ def test_parse_llm_brief_json_normalizes_required_fields():
 
     assert brief.source == "llm"
     assert brief.contributions[0].claim == "提出稀疏 attention block"
-    assert brief.key_terms[0].term == "self-attention"
+    assert brief.key_terms == []
 
 
 async def test_brief_generation_graph_generates_and_decorates_brief():
@@ -203,7 +201,6 @@ async def test_brief_generation_graph_generates_and_decorates_brief():
           "motivation": "降低计算成本。",
           "contributions": [{"claim": "提出稀疏 attention block", "why_it_matters": "降低复杂度"}],
           "method_walkthrough": [{"title": "Sparse block", "explanation": "减少注意力连接。"}],
-          "key_terms": [{"term": "self-attention", "explanation_zh": "自注意力机制"}],
           "reading_focus": [{"section_id": "method", "section_title": "Method", "reason": "理解方法"}],
           "review_questions": [{"question": "方法核心是什么？", "level": "basic"}],
           "limitations": ["未验证超长文本。"]
@@ -246,7 +243,6 @@ def test_parse_lecture_llm_brief_json_preserves_core_concepts():
       "motivation": "反向传播是训练神经网络的基础。",
       "core_concepts": [{"claim": "Chain rule", "why_it_matters": "用于逐层计算梯度"}],
       "method_walkthrough": [{"title": "Backward pass", "explanation": "从损失函数反向传播梯度。"}],
-      "key_terms": [{"term": "backpropagation", "explanation_zh": "反向传播"}],
       "reading_focus": [{"section_id": "1", "section_title": "Backpropagation", "reason": "理解核心算法"}],
       "review_questions": [{"question": "chain rule 的作用是什么？", "level": "basic"}],
       "limitations": []
@@ -259,6 +255,28 @@ def test_parse_lecture_llm_brief_json_preserves_core_concepts():
     assert brief.contributions[0].claim == "Chain rule"
 
 
+def test_parse_llm_brief_json_accepts_string_evidence_from_models():
+    raw = """
+    {
+      "brief_type": "lecture",
+      "tldr": ["本讲介绍 convolution。", "核心是局部连接。", "重点是参数共享。"],
+      "problem": "理解卷积网络如何降低参数量。",
+      "motivation": "卷积结构适合图像学习。",
+      "core_concepts": [{"claim": "Sparse connectivity", "why_it_matters": "减少参数", "evidence": "Chunk 4: sparse connections"}],
+      "method_walkthrough": [{"title": "Convolution", "explanation": "滑动 kernel。", "evidence": "Chunk 7: 2D convolution"}],
+      "reading_focus": [{"section_id": "slide_1", "section_title": "Slide 2", "reason": "理解局部连接"}],
+      "review_questions": [{"question": "kernel 的作用是什么？", "level": "basic"}],
+      "limitations": []
+    }
+    """
+
+    brief = parse_llm_brief_json("doc1", "lecture.pdf", raw)
+
+    assert brief.brief_type == "lecture"
+    assert brief.contributions[0].evidence.quote == "Chunk 4: sparse connections"
+    assert brief.method_walkthrough[0].evidence.quote == "Chunk 7: 2D convolution"
+
+
 from scholar_lens.api.brief_builder import build_lecture_llm_brief_prompt
 
 
@@ -269,8 +287,9 @@ def test_lecture_llm_prompt_is_not_paper_template():
         [{"text": "Backpropagation applies the chain rule to neural networks.", "metadata": {"section_id": "1"}}],
     )
 
-    assert "Lecture Study Brief" in prompt
+    assert "Lecture Learning Analysis" in prompt
     assert "core_concepts" in prompt
+    assert "key_terms" not in prompt
     assert "important_slides" in prompt
     assert "formulas_or_figures" in prompt
     assert "self-check" in prompt
@@ -300,6 +319,7 @@ def test_llm_brief_prompt_stays_compact_for_long_documents():
 
     assert len(prompt) <= 7000
     assert "Return ONLY valid JSON" in prompt
+    assert "key_terms" not in prompt
 
 
 def test_brief_endpoint_does_not_turn_low_text_quality_into_brief(brief_client):

@@ -16,9 +16,13 @@ export function buildSectionCacheKey(docId, sectionId, mode, sectionText) {
   return `${docId || ''}|${sectionId || ''}|${mode}|${stableTextHash(sectionText || '')}`
 }
 
+export function buildCoursewareTranslateHint() {
+  return '请在阅读区选中需要翻译的内容，或粘贴文本翻译。'
+}
+
 export function isCoursewareDocument(doc) {
   const type = doc?.doc_type || ''
-  return type === 'slides_pdf' || type === 'courseware_pptx' || type === 'courseware' || type === 'lecture_slide'
+  return type === 'slides_pdf' || type === 'courseware' || type === 'lecture_slide'
 }
 
 export function buildSectionLabel(section, doc = {}) {

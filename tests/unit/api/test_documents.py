@@ -98,25 +98,14 @@ class TestDocumentRoutes:
         assert r.status_code == 200
         assert r.json()["doc_type"] == "slides_pdf"
 
-    def test_upload_courseware_endpoint_accepts_pptx(self, client, monkeypatch):
-        class FakeParser:
-            def parse(self, source):
-                return ParsedDocument(
-                    source_path=str(source),
-                    parser_used="fake",
-                    doc_subtype="research_paper",
-                    raw_text="Slide 1\nSelf-attention",
-                )
-
-        monkeypatch.setattr("scholar_lens.parsers.ppt_parser.PPTParser", FakeParser)
-
+    def test_upload_courseware_endpoint_rejects_pptx(self, client):
         r = client.post(
             "/api/documents/upload/courseware",
             files={"file": ("slides.pptx", io.BytesIO(b"pptx"), "application/vnd.openxmlformats-officedocument.presentationml.presentation")},
         )
 
-        assert r.status_code == 200
-        assert r.json()["doc_type"] == "courseware_pptx"
+        assert r.status_code == 415
+        assert "PDF files only" in r.json()["detail"]
 
     def test_upload_paper_endpoint_rejects_pptx(self, client):
         r = client.post(
@@ -188,6 +177,34 @@ class TestDocumentRoutes:
         r6 = client.delete(f"/api/documents/{doc_id}")
         assert r6.status_code == 200
 
+    def test_delete_document_clears_document_dir_vector_index_and_memory(self, client, monkeypatch):
+        store = documents._store
+        doc = store.create_document("paper.pdf")
+        store.save_source(doc.doc_id, b"%PDF-1.4", suffix=".pdf")
+        (store.document_dir(doc.doc_id) / "translation_cache.json").write_text("{}", encoding="utf-8")
+        (store.document_dir(doc.doc_id) / "brief_cache.json").write_text("{}", encoding="utf-8")
+
+        vector_deleted = []
+        memory_deleted = []
+
+        def fake_delete_vectors(doc_id, settings=None):
+            vector_deleted.append((doc_id, settings))
+            return True
+
+        class FakeMemory:
+            async def clear_document_memory(self, doc_id):
+                memory_deleted.append(doc_id)
+
+        monkeypatch.setattr(documents, "delete_document_vectors", fake_delete_vectors, raising=False)
+        monkeypatch.setattr(documents, "_safe_memory_manager", lambda: FakeMemory())
+
+        r = client.delete(f"/api/documents/{doc.doc_id}")
+
+        assert r.status_code == 200
+        assert not store.document_dir(doc.doc_id).exists()
+        assert vector_deleted and vector_deleted[0][0] == doc.doc_id
+        assert memory_deleted == [doc.doc_id]
+
     def test_upload_attempts_vector_indexing_after_chunks_saved(self, client, monkeypatch):
         calls = []
 
@@ -233,59 +250,18 @@ class TestDocumentRoutes:
         assert calls[0][1] == r.json()["doc_id"]
         assert calls[0][2] == [f"{r.json()['doc_id']}_0_0"]
 
-    def test_upload_accepts_pptx_and_preserves_slide_chunks(self, client, monkeypatch):
-        monkeypatch.setattr(documents, "index_document_chunks", lambda *args, **kwargs: False, raising=False)
-        monkeypatch.setattr(documents, "_auto_enhance_after_upload", AsyncMock(return_value=None))
-
-        class FakePPTParser:
-            def parse(self, source):
-                assert source.name == "source.pptx"
-                return ParsedDocument(
-                    source_path=str(source),
-                    parser_used="fake-pptx",
-                    doc_subtype="courseware_pptx",
-                    sections=[
-                        {"id": "slide_0", "title": "Intro", "text": "Intro\nCourse goals."},
-                        {"id": "slide_1", "title": "Attention", "text": "Attention\nQ K V."},
-                    ],
-                    raw_text="Intro\n\nAttention",
-                )
-
-        monkeypatch.setattr("scholar_lens.parsers.ppt_parser.PPTParser", FakePPTParser)
-
-        r = client.post(
-            "/api/documents/upload/courseware",
-            files={
-                "file": (
-                    "lecture.pptx",
-                    io.BytesIO(b"pptx bytes"),
-                    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                )
-            },
-        )
-
-        assert r.status_code == 200
-        data = r.json()
-        assert data["status"] == "ready"
-        assert data["doc_type"] == "courseware_pptx"
-        assert documents._store.source_path(data["doc_id"]).name == "source.pptx"
-        chunks = documents._store.load_chunks(data["doc_id"])
-        assert [c["metadata"]["content_type"] for c in chunks] == ["slide", "slide"]
-        sections = documents._store.load_sections(data["doc_id"])
-        assert [section.title for section in sections] == ["Slide 1", "Slide 2"]
-
     def test_section_text_falls_back_to_parsed_slide_text(self, client):
         store = documents._store
-        doc = store.create_document("lecture.pptx")
+        doc = store.create_document("lecture.pdf")
         store.update_status(doc.doc_id, DocumentStatus.ready)
         store.save_sections(doc.doc_id, [
             SectionSummary(section_id="slide_0", title="Slide 1", level=1, gist="Short gist."),
         ])
         store.save_chunks(doc.doc_id, [])
         store.save_parsed_document(doc.doc_id, ParsedDocument(
-            source_path="lecture.pptx",
+            source_path="lecture.pdf",
             parser_used="fake",
-            doc_subtype="courseware_pptx",
+            doc_subtype="slides_pdf",
             sections=[{"id": "slide_0", "title": "Outline", "text": "Outline\nCourse goals and attention."}],
             raw_text="Outline\nCourse goals and attention.",
         ))
@@ -294,6 +270,33 @@ class TestDocumentRoutes:
 
         assert r.status_code == 200
         assert r.json()["text"] == "Outline\nCourse goals and attention."
+
+    def test_section_text_falls_back_to_parsed_page_range(self, client):
+        from scholar_lens.parsers.models import ParsedPage
+
+        store = documents._store
+        doc = store.create_document("paper.pdf")
+        store.update_status(doc.doc_id, DocumentStatus.ready)
+        store.save_sections(doc.doc_id, [
+            SectionSummary(section_id="intro", title="1 Introduction", level=1, page_start=0, page_end=1),
+        ])
+        store.save_chunks(doc.doc_id, [])
+        store.save_parsed_document(doc.doc_id, ParsedDocument(
+            source_path="paper.pdf",
+            parser_used="fake",
+            doc_subtype="research_paper",
+            pages=[
+                ParsedPage(page_num=0, text="Introduction page one.", char_count=22),
+                ParsedPage(page_num=1, text="Introduction page two.", char_count=22),
+                ParsedPage(page_num=2, text="Method page.", char_count=12),
+            ],
+            raw_text="Introduction page one.\nIntroduction page two.\nMethod page.",
+        ))
+
+        r = client.get(f"/api/documents/{doc.doc_id}/sections/intro/text")
+
+        assert r.status_code == 200
+        assert r.json()["text"] == "Introduction page one.\n\nIntroduction page two."
 
     def test_upload_rejects_duplicate_filename(self, client, monkeypatch):
         class FakeParser:
@@ -579,33 +582,6 @@ class TestDocumentRoutes:
         assert data["pages"][0]["text"] == "OCR text"
         saved = store.load_ocr_enhancement(doc.doc_id)
         assert saved["pages"][0]["page"] == 2
-
-    def test_ocr_enhance_runs_for_pptx_and_persists_result(self, client, monkeypatch):
-        from scholar_lens.api.schemas import OCREnhanceResponse
-
-        store = documents._store
-        doc = store.create_document("slides.pptx", suffix=".pptx")
-        store.save_source(doc.doc_id, b"pptx", suffix=".pptx")
-        store.update_summary(doc.doc_id, ocr_recommended_pages=[1])
-
-        async def fake_runner(store_arg, doc_id, mode="auto"):
-            assert store_arg is store
-            return OCREnhanceResponse(
-                doc_id=doc_id,
-                status="completed",
-                pages=[{"page": 1, "text": "Rendered PPTX OCR text", "ocr_quality": "good"}],
-            )
-
-        monkeypatch.setattr(documents, "run_rapidocr_enhancement", fake_runner)
-
-        r = client.post(f"/api/documents/{doc.doc_id}/enhance/ocr")
-
-        assert r.status_code == 200
-        data = r.json()
-        assert data["status"] == "completed"
-        assert data["pages"][0]["text"] == "Rendered PPTX OCR text"
-        saved = store.load_ocr_enhancement(doc.doc_id)
-        assert saved["pages"][0]["page"] == 1
 
     def test_vision_enhance_runs_for_recommended_pages_and_persists_result(self, client, monkeypatch):
         from scholar_lens.api.schemas import VisionEnhanceResponse
@@ -1206,7 +1182,7 @@ class TestDocumentRoutes:
         assert qualities[0]["recommended_action"] == "ocr"
         assert data["ocr_recommended_pages"] == [2]
 
-    def test_upload_auto_runs_ocr_and_apply_for_recommended_pages(self, client, monkeypatch):
+    def test_upload_auto_runs_gpu_ocr_and_apply_for_recommended_pages(self, client, monkeypatch):
         from scholar_lens.api.schemas import OCREnhanceResponse
         from scholar_lens.parsers.models import ParsedPage
 
@@ -1234,6 +1210,7 @@ class TestDocumentRoutes:
                 )
 
         async def fake_ocr(store_arg, doc_id, mode="auto"):
+            assert mode == "auto"
             return OCREnhanceResponse(
                 doc_id=doc_id,
                 status="completed",
@@ -1251,6 +1228,7 @@ class TestDocumentRoutes:
         assert r.status_code == 200
         data = r.json()
         assert data["status"] == "ready"
+        assert data["ocr_recommended_pages"] == [2]
         saved_ocr = documents._store.load_ocr_enhancement(data["doc_id"])
         assert saved_ocr["status"] == "completed"
         enhanced = documents._store.load_parsed_document(data["doc_id"], enhanced=True)
@@ -1259,8 +1237,8 @@ class TestDocumentRoutes:
         assert chunks
         assert "OCR text" in chunks[0]["text"]
 
-    def test_upload_auto_runs_enabled_vision_and_apply(self, client, monkeypatch):
-        from scholar_lens.api.schemas import OCREnhanceResponse, VisionEnhanceResponse
+    def test_upload_does_not_auto_run_llm_or_vision_even_when_enabled(self, client, monkeypatch):
+        from scholar_lens.api.schemas import OCREnhanceResponse
         from scholar_lens.parsers.models import ParsedPage
 
         class FakeParser:
@@ -1292,18 +1270,16 @@ class TestDocumentRoutes:
             )
 
         async def fake_vision(store_arg, doc_id, pages, settings):
-            assert pages == [3]
-            assert settings is FakeSettings
-            return VisionEnhanceResponse(
-                doc_id=doc_id,
-                status="completed",
-                pages=[{"page": 3, "text": "Vision explanation for diagram content.", "vision_quality": "good"}],
-            )
+            raise AssertionError("upload should not automatically run Vision enhancement")
+
+        async def fake_llm_quality(*args, **kwargs):
+            raise AssertionError("upload should not automatically run LLM parse quality evaluation")
 
         monkeypatch.setattr("scholar_lens.parsers.pdf_parser.PDFParser", FakeParser)
         monkeypatch.setattr(documents, "get_settings", lambda: FakeSettings)
         monkeypatch.setattr(documents, "run_rapidocr_enhancement", fake_ocr)
         monkeypatch.setattr(documents, "run_vision_enhancement", fake_vision)
+        monkeypatch.setattr(documents, "evaluate_parse_quality_with_llm", fake_llm_quality)
 
         r = client.post(
             "/api/documents/upload/courseware",
@@ -1312,10 +1288,11 @@ class TestDocumentRoutes:
 
         assert r.status_code == 200
         data = r.json()
+        assert data["ocr_recommended_pages"] == [3]
         saved_vision = documents._store.load_vision_enhancement(data["doc_id"])
-        assert saved_vision["status"] == "completed"
+        assert saved_vision == {}
         enhanced = documents._store.load_parsed_document(data["doc_id"], enhanced=True)
-        assert "Vision explanation" in enhanced.raw_text
+        assert enhanced is None
 
     def test_upload_saves_parsed_document_artifact(self, client, monkeypatch):
         class FakeParser:

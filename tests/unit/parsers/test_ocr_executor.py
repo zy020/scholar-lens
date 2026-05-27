@@ -80,39 +80,10 @@ def test_executor_runs_fake_ocr_and_evaluates_quality(tmp_path, monkeypatch):
     assert result.pages[0].vision_recommended is False
 
 
-def test_executor_runs_fake_ocr_for_pptx_extracted_slide_images(tmp_path, monkeypatch):
+def test_executor_rejects_pptx_source(tmp_path):
     source = tmp_path / "source.pptx"
     source.write_bytes(b"pptx")
-    rendered = []
-
-    def fake_extract(source_path: Path, pages: list[int], work_dir: Path):
-        rendered.extend((source_path, pages))
-        image = work_dir / "slide_1.png"
-        image.write_bytes(b"png")
-        return {1: [image]}
-
-    monkeypatch.setattr("scholar_lens.parsers.ocr_executor.extract_pptx_slide_images", fake_extract)
-    executor = RapidOCRExecutor(ocr_callable=lambda image: [[None, "Rendered slide text with enough detail", 0.9]])
-
-    result = executor.run(source, pages=[1])
-
-    assert rendered == [source, [1]]
-    assert result.status == "completed"
-    assert result.pages[0].page == 1
-    assert result.pages[0].text == "Rendered slide text with enough detail"
-    assert result.pages[0].ocr_quality == "good"
-
-
-def test_executor_marks_pptx_slide_without_images_as_render_failed(tmp_path, monkeypatch):
-    source = tmp_path / "source.pptx"
-    source.write_bytes(b"pptx")
-    monkeypatch.setattr("scholar_lens.parsers.ocr_executor.extract_pptx_slide_images", lambda source, pages, work_dir: {})
     executor = RapidOCRExecutor(ocr_callable=lambda image: "ignored")
 
-    result = executor.run(source, pages=[1])
-
-    assert result.status == "failed"
-    assert result.pages[0].page == 1
-    assert result.pages[0].reason == "pptx_no_embedded_images"
-    assert "embedded images" in result.pages[0].error
-    assert result.pages[0].vision_recommended is True
+    with pytest.raises(OCRUnavailableError, match="PDF sources only"):
+        executor.run(source, pages=[1])

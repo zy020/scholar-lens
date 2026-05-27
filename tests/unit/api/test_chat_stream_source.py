@@ -5,8 +5,14 @@ def test_chat_stream_uses_token_streaming_for_light_mode():
     source = Path("scholar_lens/api/routes/chat.py").read_text(encoding="utf-8")
 
     assert "run_chat_retrieval_graph" in source
-    assert "async for chunk in llm.astream(messages)" in source
+    assert "_stream_llm_tokens_with_initial_retry" in source
     assert "if request.deep_mode:" in source
+
+
+def test_chat_stream_logs_sse_errors_with_traceback():
+    source = Path("scholar_lens/api/routes/chat.py").read_text(encoding="utf-8")
+
+    assert 'logger.exception("SSE stream error")' in source
 
 
 def test_chat_stream_streams_deep_mode_revision_stage():

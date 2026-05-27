@@ -7,8 +7,8 @@ export function briefSourceLabel(source) {
 }
 
 export function briefTitle(brief) {
-  if (brief?.brief_type === 'lecture') return '课件学习简报'
-  return '论文理解简报'
+  if (brief?.brief_type === 'lecture') return '课件学习分析'
+  return '论文学习分析'
 }
 
 export function textQualityLabel(quality) {
@@ -52,6 +52,24 @@ export function reviewQuestionsTitle(brief) {
   return '复习问题'
 }
 
+export function briefFocusLabel(item = {}, brief = {}) {
+  const title = item.section_title || item.title || item.section_id || '重点内容'
+  if (brief?.brief_type !== 'lecture') return title
+
+  const slideMatch = String(item.section_id || '').match(/^slide_(\d+)$/)
+  if (slideMatch) {
+    const slideNo = Number(slideMatch[1]) + 1
+    return title && title !== `Slide ${slideNo}` ? `Slide ${slideNo}：${title}` : `Slide ${slideNo}`
+  }
+  if (/^\d+$/.test(String(item.section_id || ''))) {
+    const slideNo = Number(item.section_id) + 1
+    return title && title !== `Slide ${slideNo}` ? `Slide ${slideNo}：${title}` : `Slide ${slideNo}`
+  }
+  const titleMatch = String(title).match(/^Slide\s+(\d+)/i)
+  if (titleMatch) return title
+  return title
+}
+
 export function formatBriefMarkdown(brief) {
   if (!brief) return ''
   const title = briefTitle(brief)
@@ -61,7 +79,7 @@ export function formatBriefMarkdown(brief) {
     '',
     `来源：${briefSourceLabel(brief.source)}`,
     `文本质量：${textQualityLabel(brief.text_quality)}`,
-    `建议 OCR：${brief.ocr_needed ? '是' : '否'}`,
+    `存在低质量页：${brief.ocr_needed ? '是' : '否'}`,
     '',
     '## 核心速览',
     ...(brief.tldr || []).map(item => `- ${item}`),
@@ -84,14 +102,9 @@ export function formatBriefMarkdown(brief) {
       ...(brief.method_walkthrough || []).map((item, index) => `${index + 1}. **${item.title}**: ${item.explanation}`),
       '',
     ] : []),
-    ...((brief.key_terms || []).length > 0 ? [
-      '## 关键术语',
-      ...(brief.key_terms || []).map(item => `- **${item.term}**: ${item.explanation_zh || ''}`),
-      '',
-    ] : []),
     ...((brief.reading_focus || []).length > 0 ? [
       `## ${labels.focus}`,
-      ...(brief.reading_focus || []).map(item => `- **${item.section_title}**: ${item.reason}`),
+      ...(brief.reading_focus || []).map(item => `- **${briefFocusLabel(item, brief)}**: ${item.reason}`),
       '',
     ] : []),
     `## ${reviewQuestionsTitle(brief)}`,

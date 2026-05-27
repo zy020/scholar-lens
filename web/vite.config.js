@@ -7,14 +7,11 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (id.includes('node_modules/katex') || id.includes('node_modules/react-katex')) {
+          if (id.includes('node_modules/katex')) {
             return 'katex'
           }
           if (id.includes('node_modules/react') || id.includes('node_modules/react-dom')) {
             return 'react'
-          }
-          if (id.includes('node_modules/lucide-react')) {
-            return 'icons'
           }
           if (id.includes('node_modules')) {
             return 'vendor'

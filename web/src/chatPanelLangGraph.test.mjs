@@ -9,3 +9,9 @@ test('ChatPanel exposes deep mode and sends it with chat requests', () => {
   assert.match(source, /深度模式/)
   assert.match(source, /deep_mode:\s*deepMode/)
 })
+
+test('ChatPanel does not render education-unfriendly evidence cards', () => {
+  assert.doesNotMatch(source, /evidence-card/)
+  assert.doesNotMatch(source, /原文证据/)
+  assert.doesNotMatch(source, /getCitedEvidenceView/)
+})

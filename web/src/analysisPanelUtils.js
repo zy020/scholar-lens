@@ -32,13 +32,14 @@ export function formatSectionSummaryLabel(sectionId, index = 0) {
 }
 
 export function parseQualityStatusLabel(status) {
+  if (status === 'enhanced_completed') return '已完成解析增强'
   if (status === 'needs_enhancement') return '需要增强解析'
   if (status === 'usable') return '解析质量可用'
   return '解析质量未知'
 }
 
 export function parseQualityActionLabel(action) {
-  if (action === 'ocr') return '建议 OCR'
+  if (action === 'ocr') return '低文本页'
   if (action === 'vision') return '建议 Vision'
   if (action === 'keep') return '保留当前结果'
   return action || '待判断'
@@ -52,7 +53,9 @@ export function parseQualityPageItems(analysis, limit = 6) {
       pageLabel: item.page_label || formatSectionSummaryLabel(`page_${item.page ?? index}`, index),
       quality: item.quality || 'unknown',
       action: parseQualityActionLabel(item.recommended_action),
-      score: Number.isFinite(Number(item.overall_score)) ? Number(item.overall_score).toFixed(2) : '',
+      score: Number.isFinite(Number(item.overall_score)) && Number(item.overall_score) > 0
+        ? Number(item.overall_score).toFixed(2)
+        : '',
       preview: item.text_preview || '',
     }))
 }

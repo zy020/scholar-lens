@@ -98,7 +98,7 @@ def _assess_page(
         structure_score += 0.25
     if line_count >= 2:
         structure_score += 0.2
-    if doc.doc_subtype in {"slides_pdf", "courseware_pptx"}:
+    if doc.doc_subtype == "slides_pdf":
         structure_score += 0.2
     structure_score = _clamp(structure_score)
 
@@ -148,7 +148,7 @@ def _assess_page(
 
     return ParseUnitQuality(
         unit_id=f"page_{page.page_num}",
-        unit_type="slide" if doc.doc_subtype in {"slides_pdf", "courseware_pptx"} else "page",
+        unit_type="slide" if doc.doc_subtype == "slides_pdf" else "page",
         page_start=page.page_num,
         page_end=page.page_num,
         text_score=round(text_score, 3),
@@ -166,7 +166,7 @@ def _assess_page(
 def _expected_chars(doc_subtype: str) -> int:
     if doc_subtype == "research_paper":
         return 800
-    if doc_subtype in {"slides_pdf", "courseware_pptx"}:
+    if doc_subtype == "slides_pdf":
         return 120
     return 400
 

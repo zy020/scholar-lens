@@ -95,15 +95,15 @@ export default function ConfigPanel() {
         <legend>解析增强</legend>
         <label className="checkbox-label">
           <input type="checkbox" checked={settings.auto_ocr_enabled !== false} disabled readOnly />
-          {' '}上传后自动执行 OCR 并应用结果
+          {' '}上传后自动使用 GPU OCR 处理推荐页
         </label>
         <label className="checkbox-label">
           <input type="checkbox" checked={settings.llm_quality_enabled || false} onChange={set('llm_quality_enabled')} />
-          {' '}上传后使用 LLM 评估解析质量
+          {' '}手动解析增强时启用 LLM 解析质量评估
         </label>
         <label className="checkbox-label">
           <input type="checkbox" checked={settings.vision_enhancement_enabled || false} onChange={set('vision_enhancement_enabled')} />
-          {' '}上传后使用 Vision 处理疑难页面并应用结果
+          {' '}手动解析增强时启用 Vision 处理疑难页面
         </label>
       </fieldset>
 

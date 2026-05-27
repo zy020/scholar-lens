@@ -95,7 +95,7 @@ export default function SectionsPanel({
             {!s.isParent && <span className="section-toggle-spacer" />}
             {!courseware && <span className="section-number">{s.displayNumber || `§${s.index + 1}`}</span>}
             {courseware && <span className="section-number">{buildSectionLabel(s, doc)}</span>}
-            <span className="section-title-text">{courseware ? (s.gist || '') : s.title}</span>
+            <span className="section-title-text">{courseware ? (s.title || buildSectionLabel(s, doc)) : s.title}</span>
             {s.page_start != null && <span className="section-page">第 {Number(s.page_start) + 1} 页</span>}
           </button>
         ))}

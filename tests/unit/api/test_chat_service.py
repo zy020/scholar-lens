@@ -97,6 +97,47 @@ def test_build_chat_messages_separates_general_background_from_document_claims()
     assert "do not add an uncited concluding implication sentence" in user_prompt
 
 
+def test_build_chat_messages_uses_learning_evidence_policy_for_teaching_questions():
+    messages = build_chat_messages(
+        question="我不太理解 self-attention，能不能用一个例子讲直觉？",
+        context_text="[1] Self-attention lets each token collect information from other tokens.",
+    )
+
+    user_prompt = messages[-1].content
+
+    assert "Evidence policy: learning_explanation" in user_prompt
+    assert "文档依据" in user_prompt
+    assert "通用背景" in user_prompt
+    assert "teaching examples, analogies, or intuition" in user_prompt
+    assert "without numbered citations" in user_prompt
+
+
+def test_build_chat_messages_uses_extension_policy_for_explicit_broader_questions():
+    messages = build_chat_messages(
+        question="请拓展讲一下 Transformer 和 CNN 的区别",
+        context_text="[1] The document introduces Transformer self-attention.",
+    )
+
+    user_prompt = messages[-1].content
+
+    assert "Evidence policy: extension" in user_prompt
+    assert "拓展说明" in user_prompt
+    assert "not part of the document" in user_prompt
+
+
+def test_build_chat_messages_uses_strict_policy_for_document_claims():
+    messages = build_chat_messages(
+        question="这篇论文提出了什么贡献？",
+        context_text="[1] The paper contributes a new retrieval method.",
+    )
+
+    user_prompt = messages[-1].content
+
+    assert "Evidence policy: document_grounded" in user_prompt
+    assert "Every document claim should be grounded in the retrieved context" in user_prompt
+    assert "Do not refer to hidden excerpt labels" in user_prompt
+
+
 def test_retrieve_chat_context_marks_formula_evidence_for_explanation(tmp_path):
     store = DocumentStore(root=tmp_path)
     doc = store.create_document("slides.pdf")

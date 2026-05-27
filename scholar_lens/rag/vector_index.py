@@ -68,6 +68,22 @@ def index_document_chunks(
         return False
 
 
+def delete_document_vectors(
+    doc_id: str,
+    settings: Settings | None,
+    vector_store: ScholarVectorStore | None = None,
+) -> bool:
+    if not doc_id or settings is None:
+        return False
+    try:
+        target_store = vector_store or _default_vector_store(settings)
+        target_store.delete_by_doc_id(doc_id)
+        return True
+    except Exception:
+        logger.warning("Vector deletion failed for document %s", doc_id, exc_info=True)
+        return False
+
+
 def search_vector_chunks(
     doc_id: str,
     query: str,

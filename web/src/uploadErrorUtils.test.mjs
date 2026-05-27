@@ -9,11 +9,11 @@ test('paper upload extension error explains PDF-only entrance', () => {
   assert.match(message, /论文上传仅支持 PDF/)
 })
 
-test('courseware upload extension error explains PDF and PPTX support', () => {
-  const message = formatUploadError('notes.docx', 'courseware', 'Courseware uploads accept PDF or PPTX files only')
+test('courseware upload extension error explains PDF-only entrance', () => {
+  const message = formatUploadError('notes.docx', 'courseware', 'Courseware uploads accept PDF files only')
 
   assert.match(message, /notes\.docx/)
-  assert.match(message, /课件上传支持 PDF\/PPTX/)
+  assert.match(message, /课件上传仅支持 PDF/)
 })
 
 test('generic upload error keeps original message', () => {

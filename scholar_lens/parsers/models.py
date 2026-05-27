@@ -15,8 +15,8 @@ class ParsedPage(BaseModel):
 
 class ParsedDocument(BaseModel):
     source_path: str
-    parser_used: str = ""  # pymupdf | pdfplumber | python-pptx
-    doc_subtype: str  # research_paper | slides_pdf | courseware_pptx
+    parser_used: str = ""  # pymupdf | pdfplumber
+    doc_subtype: str  # research_paper | slides_pdf
     pages: list[ParsedPage] = Field(default_factory=list)
     sections: list[dict] = Field(default_factory=list)
     raw_text: str = ""

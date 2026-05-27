@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import { explainText, getSectionText } from './api'
-import { buildSectionCacheKey, buildSectionLabel, buildSectionTranslationPrompt, isCoursewareDocument } from './translationUtils'
+import { buildCoursewareTranslateHint, buildSectionCacheKey, buildSectionTranslationPrompt, isCoursewareDocument } from './translationUtils'
 import SectionsPanel from './SectionsPanel'
 import 'katex/dist/katex.min.css'
 
@@ -26,6 +26,7 @@ export default function TranslatePanel({ doc, sections, activeSectionId, onSelec
   const cacheRef = useRef({})
 
   const currentSection = sections.find(s => s.section_id === activeSectionId)
+  const courseware = isCoursewareDocument(doc)
 
   const doExplain = useCallback(async (text, mode, explicitCacheKey = '', explicitSectionId = activeSectionId) => {
     const sectionId = explicitSectionId || ''
@@ -100,26 +101,31 @@ export default function TranslatePanel({ doc, sections, activeSectionId, onSelec
   return (
     <div className="translate-panel">
       <h3>翻译</h3>
-      <div className="translate-sections">
-        <button className="translate-sections-toggle" onClick={() => setShowSections(v => !v)}>
-          {showSections ? '隐藏章节' : '显示章节'}
-        </button>
-        {showSections && (
-          <SectionsPanel
-            key={sections.length}
-            sections={sections}
-            activeSectionId={activeSectionId}
-            onSelectSection={onSelectSection || (() => {})}
-            maxInitialLevel={1}
-            compact
-            doc={doc}
-          />
-        )}
-      </div>
-      {currentSection && (
+      {!courseware && (
+        <div className="translate-sections">
+          <button className="translate-sections-toggle" onClick={() => setShowSections(v => !v)}>
+            {showSections ? '隐藏章节' : '显示章节'}
+          </button>
+          {showSections && (
+            <SectionsPanel
+              key={sections.length}
+              sections={sections}
+              activeSectionId={activeSectionId}
+              onSelectSection={onSelectSection || (() => {})}
+              maxInitialLevel={1}
+              compact
+              doc={doc}
+            />
+          )}
+        </div>
+      )}
+      {courseware && (
+        <p className="brief-muted">{buildCoursewareTranslateHint()}</p>
+      )}
+      {!courseware && currentSection && (
         <div className="translate-actions">
           <button onClick={translateSection} disabled={translating}>
-            {isCoursewareDocument(doc) ? `翻译 ${buildSectionLabel(currentSection, doc)}` : '翻译当前章节'}
+            翻译当前章节
           </button>
         </div>
       )}

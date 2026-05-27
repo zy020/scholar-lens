@@ -1,6 +1,7 @@
 from scholar_lens.core.settings import EmbeddingConfig, Settings
 from scholar_lens.parsers.models import Chunk, ChunkMetadata
 from scholar_lens.rag.vector_index import (
+    delete_document_vectors,
     embedding_configured,
     index_document_chunks,
     search_vector_chunks,
@@ -69,6 +70,16 @@ def test_index_document_chunks_skips_without_embedding_config(tmp_path):
     assert indexed is False
     assert vector_store.deleted == []
     assert vector_store.added == []
+
+
+def test_delete_document_vectors_does_not_require_embedding_config(tmp_path):
+    settings = Settings(_env_file="", data_dir=tmp_path, embedding=EmbeddingConfig())
+    vector_store = FakeVectorStore()
+
+    deleted = delete_document_vectors("doc1", settings, vector_store=vector_store)
+
+    assert deleted is True
+    assert vector_store.deleted == ["doc1"]
 
 
 def test_index_document_chunks_deletes_then_adds_embeddings(tmp_path):

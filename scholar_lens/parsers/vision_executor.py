@@ -11,7 +11,7 @@ import requests
 from pydantic import BaseModel, Field
 
 from scholar_lens.core.settings import VisionConfig
-from scholar_lens.parsers.ocr_executor import extract_pptx_slide_images, render_pdf_pages
+from scholar_lens.parsers.ocr_executor import render_pdf_pages
 
 
 class VisionUnavailableError(RuntimeError):
@@ -52,8 +52,8 @@ class VisionEnhancementExecutor:
         if not self._config.api_key or not self._config.base_url or not self._config.model:
             raise VisionUnavailableError("Vision model is not configured")
         source = Path(source_path)
-        if source.suffix.lower() not in {".pdf", ".pptx"}:
-            raise VisionUnavailableError("Vision enhancement currently supports PDF and PPTX sources only")
+        if source.suffix.lower() != ".pdf":
+            raise VisionUnavailableError("Vision enhancement currently supports PDF sources only")
         if not pages:
             return VisionEnhancementResult(status="skipped", pages=[])
 
@@ -63,17 +63,11 @@ class VisionEnhancementExecutor:
             for page in pages:
                 image_paths = prepared.get(page, [])
                 if not image_paths:
-                    reason = "pptx_no_embedded_images" if source.suffix.lower() == ".pptx" else "render_failed"
-                    error = (
-                        f"Slide {page} has no embedded images for lightweight PPTX Vision"
-                        if source.suffix.lower() == ".pptx"
-                        else f"Page {page} could not be prepared for Vision"
-                    )
                     page_results.append(VisionPageEnhancement(
                         page=page,
                         vision_quality="failed",
-                        reason=reason,
-                        error=error,
+                        reason="render_failed",
+                        error=f"Page {page} could not be prepared for Vision",
                     ))
                     continue
                 try:
@@ -240,8 +234,6 @@ def prepare_vision_images(source_path: Path, pages: list[int], work_dir: Path) -
     suffix = source_path.suffix.lower()
     if suffix == ".pdf":
         return render_pdf_pages(source_path, pages, work_dir)
-    if suffix == ".pptx":
-        return extract_pptx_slide_images(source_path, pages, work_dir)
     return {}
 
 

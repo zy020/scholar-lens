@@ -1,19 +1,17 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { canInlinePreview, isPptxDocument, readerOpenLabel } from './readerPanelUtils.js'
-
-test('reader utilities treat pptx as downloadable rather than inline pdf preview', () => {
-  const doc = { name: 'lecture.pptx', file_url: '/api/documents/abc/file' }
-
-  assert.equal(isPptxDocument(doc), true)
-  assert.equal(canInlinePreview(doc), false)
-  assert.equal(readerOpenLabel(doc), '下载 PPTX')
-})
+import { canInlinePreview, readerOpenLabel, readerPreviewUrl } from './readerPanelUtils.js'
 
 test('reader utilities keep pdf inline preview behavior', () => {
   const doc = { name: 'paper.pdf', file_url: '/api/documents/abc/file' }
 
-  assert.equal(isPptxDocument(doc), false)
   assert.equal(canInlinePreview(doc), true)
   assert.equal(readerOpenLabel(doc), '新窗口打开 PDF')
+})
+
+test('reader utilities prefer explicit preview url when provided', () => {
+  const doc = { name: 'lecture.pdf', file_url: '/api/documents/abc/file', preview_url: '/api/documents/abc/preview.pdf' }
+
+  assert.equal(canInlinePreview(doc), true)
+  assert.equal(readerPreviewUrl(doc), '/api/documents/abc/preview.pdf')
 })

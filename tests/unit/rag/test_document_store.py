@@ -44,14 +44,14 @@ class TestDocumentStore:
         assert len(loaded) == 2
         assert loaded[0]["text"] == "Hello world"
 
-    def test_source_path_discovers_non_pdf_source(self):
-        doc = self.store.create_document("slides.pptx")
+    def test_source_path_discovers_saved_pdf_source(self):
+        doc = self.store.create_document("slides.pdf")
 
-        saved = self.store.save_source(doc.doc_id, b"pptx-bytes", suffix=".pptx")
+        saved = self.store.save_source(doc.doc_id, b"pdf-bytes", suffix=".pdf")
 
-        assert saved.name == "source.pptx"
-        assert self.store.source_path(doc.doc_id).name == "source.pptx"
-        assert self.store.source_path(doc.doc_id, suffix=".pptx") == saved
+        assert saved.name == "source.pdf"
+        assert self.store.source_path(doc.doc_id).name == "source.pdf"
+        assert self.store.source_path(doc.doc_id, suffix=".pdf") == saved
 
     def test_delete_removes_directory(self):
         doc = self.store.create_document("todel.pdf")

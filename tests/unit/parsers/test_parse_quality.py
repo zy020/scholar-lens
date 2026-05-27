@@ -47,8 +47,8 @@ def test_quality_recommends_ocr_for_low_text_visual_page():
 
 def test_quality_uses_table_and_formula_metadata_as_visual_signal():
     doc = ParsedDocument(
-        source_path="slides.pptx",
-        doc_subtype="courseware_pptx",
+        source_path="slides.pdf",
+        doc_subtype="slides_pdf",
         pages=[
             ParsedPage(page_num=1, text="", char_count=0),
             ParsedPage(page_num=2, text="softmax(QK^T / sqrt(d_k)) V", char_count=28),

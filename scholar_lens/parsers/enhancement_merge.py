@@ -74,7 +74,7 @@ def merge_enhancements(
         page.char_count = len(text)
 
     merged.raw_text = "\n\n".join(page.text.strip() for page in merged.pages if page.text.strip())
-    if merged.doc_subtype in {"slides_pdf", "courseware_pptx"}:
+    if merged.doc_subtype == "slides_pdf":
         merged.sections = _courseware_sections(merged)
     return merged
 

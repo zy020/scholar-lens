@@ -1,7 +1,9 @@
 from pathlib import Path
 
+import pytest
+
 from scholar_lens.core.settings import VisionConfig
-from scholar_lens.parsers.vision_executor import VisionEnhancementExecutor, parse_vision_structured_content
+from scholar_lens.parsers.vision_executor import VisionEnhancementExecutor, VisionUnavailableError, parse_vision_structured_content
 
 
 def test_vision_executor_sends_images_and_parses_response(tmp_path, monkeypatch):
@@ -123,19 +125,14 @@ def test_parse_vision_structured_content_keeps_empty_json_unusable():
     assert parsed["visual_type"] == "mixed"
 
 
-def test_vision_executor_marks_pptx_slide_without_images(tmp_path, monkeypatch):
+def test_vision_executor_rejects_pptx_source(tmp_path):
     source = tmp_path / "slides.pptx"
     source.write_bytes(b"pptx")
 
-    monkeypatch.setattr("scholar_lens.parsers.vision_executor.prepare_vision_images", lambda source, pages, work_dir: {})
     executor = VisionEnhancementExecutor(
         config=VisionConfig(api_key="test-api-key", base_url="https://vision.example/v1", model="vision-model"),
         post=lambda *args, **kwargs: None,
     )
 
-    result = executor.run(source, pages=[1])
-
-    assert result.status == "failed"
-    assert result.pages[0].page == 1
-    assert result.pages[0].reason == "pptx_no_embedded_images"
-    assert "embedded images" in result.pages[0].error
+    with pytest.raises(VisionUnavailableError, match="PDF sources only"):
+        executor.run(source, pages=[1])

@@ -270,10 +270,10 @@ class TestSectionAwareChunker:
         assert len(chunks) == 1
         assert chunks[0].metadata.section_id == "1"
 
-    def test_courseware_pptx_chunks_preserve_slide_sections(self):
+    def test_courseware_pdf_chunks_preserve_slide_sections(self):
         doc = ParsedDocument(
-            source_path="slides.pptx",
-            doc_subtype="courseware_pptx",
+            source_path="slides.pdf",
+            doc_subtype="slides_pdf",
             sections=[
                 {"id": "slide_0", "title": "Attention", "text": "Query key value overview."},
                 {"id": "slide_1", "title": "Training", "text": "Loss curves and examples."},
@@ -289,10 +289,10 @@ class TestSectionAwareChunker:
         assert chunks[0].text.startswith("Attention")
         assert chunks[0].chunk_id == "deck_slide_0_0"
 
-    def test_courseware_pptx_uses_pages_for_untitled_slides(self):
+    def test_courseware_pdf_uses_pages_for_untitled_slides(self):
         doc = ParsedDocument(
-            source_path="slides.pptx",
-            doc_subtype="courseware_pptx",
+            source_path="slides.pdf",
+            doc_subtype="slides_pdf",
             pages=[
                 ParsedPage(page_num=0, text="Intro\nCourse goals.", char_count=19),
                 ParsedPage(page_num=1, text="Q K V attention details.", char_count=22),
@@ -357,8 +357,8 @@ class TestSectionAwareChunker:
 
     def test_chunk_metadata_includes_normalized_formula_terms(self):
         doc = ParsedDocument(
-            source_path="slides.pptx",
-            doc_subtype="courseware_pptx",
+            source_path="slides.pdf",
+            doc_subtype="slides_pdf",
             pages=[
                 ParsedPage(
                     page_num=4,

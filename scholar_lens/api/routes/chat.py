@@ -278,7 +278,6 @@ async def chat_stream(request: ChatRequest):
 
             from scholar_lens.core.llm_factory import ChatLLMFactory
 
-            llm = ChatLLMFactory.from_settings(settings).create(config=llm_configs[0], streaming=True)
             messages = build_chat_messages(
                 question=request.message,
                 context_text=retrieval.context.context_text,
@@ -288,11 +287,12 @@ async def chat_stream(request: ChatRequest):
                 student_level=request.student_level,
             )
             full = ""
-            async for chunk in llm.astream(messages):
-                token = getattr(chunk, "content", "")
-                if token:
-                    full += token
-                    yield f"data: {json.dumps({'type': 'token', 'token': token})}\n\n"
+            async for token in _stream_llm_tokens_with_initial_retry(
+                lambda: ChatLLMFactory.from_settings(settings).create(config=llm_configs[0], streaming=True),
+                messages,
+            ):
+                full += token
+                yield f"data: {json.dumps({'type': 'token', 'token': token})}\n\n"
             await _api_circuit_breaker.record_success()
             yield f"data: {json.dumps({'type': 'evidence', 'items': retrieval.evidence})}\n\n"
             yield f"data: {json.dumps({'type': 'done', 'full': full[:5000]})}\n\n"
@@ -300,7 +300,7 @@ async def chat_stream(request: ChatRequest):
             pass
         except Exception as e:
             await _api_circuit_breaker.record_failure()
-            logger.error(f"SSE stream error: {e}")
+            logger.exception("SSE stream error")
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")

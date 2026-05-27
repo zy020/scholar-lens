@@ -1,4 +1,4 @@
-import { canInlinePreview, readerOpenLabel } from './readerPanelUtils'
+import { canInlinePreview, readerOpenLabel, readerPreviewUrl } from './readerPanelUtils'
 
 export default function ReaderPanel({ doc }) {
   const fileUrl = doc.file_url || null
@@ -8,6 +8,7 @@ export default function ReaderPanel({ doc }) {
   }
 
   const inlinePreview = canInlinePreview(doc)
+  const previewUrl = readerPreviewUrl(doc)
 
   return (
     <div className="reader-panel">
@@ -19,8 +20,8 @@ export default function ReaderPanel({ doc }) {
           )}
         </div>
       </div>
-      {fileUrl && inlinePreview && <iframe src={fileUrl} className="pdf-viewer" title="文档预览" />}
-      {fileUrl && !inlinePreview && <div className="pdf-placeholder">PPTX 可在右侧章节与问答中学习，原文件请通过上方按钮下载。</div>}
+      {fileUrl && inlinePreview && <iframe src={previewUrl} className="pdf-viewer" title="文档预览" />}
+      {fileUrl && !inlinePreview && <div className="pdf-placeholder">当前文档不可内嵌预览，原文件请通过上方按钮打开。</div>}
       {!fileUrl && <div className="pdf-placeholder">原文件不可用</div>}
     </div>
   )

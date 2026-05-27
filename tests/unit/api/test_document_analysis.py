@@ -8,7 +8,7 @@ from scholar_lens.api.document_analysis import (
 from scholar_lens.api.schemas import SectionSummary
 from scholar_lens.core.models import DocumentUnderstanding, Section, Term
 from scholar_lens.core.settings import EmbeddingConfig, LLMConfig, Settings
-from scholar_lens.parsers.models import Chunk, ChunkMetadata
+from scholar_lens.parsers.models import Chunk, ChunkMetadata, ParsedDocument, ParsedPage
 from scholar_lens.rag.document_store import DocumentStore
 
 
@@ -123,7 +123,49 @@ def test_build_analysis_response_uses_parse_quality_before_llm_analysis(tmp_path
     assert analysis.source == "parse_quality"
     assert analysis.parse_quality_status == "needs_enhancement"
     assert analysis.parse_quality_pages[0]["page_label"] == "第 3 页"
-    assert "OCR" in analysis.parse_quality_actions[0]
+    assert "当前配置" in analysis.parse_quality_actions[0]
+    assert "解析增强" in analysis.parse_quality_actions[0]
+
+
+def test_build_analysis_response_marks_completed_enhancement_as_overriding_low_quality(tmp_path):
+    store = DocumentStore(root=tmp_path)
+    doc = store.create_document("slides.pdf")
+    store.update_summary(
+        doc.doc_id,
+        ocr_recommended_pages=[2],
+        ocr_recommendation_reasons={"2": "text_low_parser_visuals"},
+    )
+    store.save_parse_quality(doc.doc_id, [
+        {
+            "unit_id": "page_2",
+            "unit_type": "slide",
+            "page_start": 2,
+            "page_end": 2,
+            "text_score": 0.1,
+            "structure_score": 0.4,
+            "visual_score": 0.8,
+            "overall_score": 0.2,
+            "quality": "weak",
+            "recommended_action": "ocr",
+            "reasons": ["text_low", "visual_high"],
+            "text_preview": "",
+        }
+    ])
+    store.save_parsed_document(
+        doc.doc_id,
+        ParsedDocument(
+            source_path="slides.pdf",
+            doc_subtype="slides_pdf",
+            pages=[ParsedPage(page_num=2, text="OCR text", char_count=8, enhanced=True)],
+        ),
+        enhanced=True,
+    )
+
+    analysis = build_analysis_response(store, doc.doc_id)
+
+    assert analysis.parse_quality_status == "enhanced_completed"
+    assert analysis.parse_quality_pages == []
+    assert analysis.parse_quality_message == "解析增强已完成。"
 
 
 async def test_enhance_document_analysis_uses_analyzer_and_persists(tmp_path):

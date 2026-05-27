@@ -17,7 +17,7 @@ const DEFAULT_READER_WIDTH = 500
 const WORKSPACE_TABS = [
   { id: 'chat', label: '问答' },
   { id: 'translate', label: '翻译' },
-  { id: 'study', label: '学习简报' },
+  { id: 'study', label: '文档分析' },
   { id: 'config', label: '配置' },
 ]
 
@@ -49,7 +49,7 @@ export default function App() {
     }).catch(() => setSections([]))
   }, [active])
 
-  const handleUpload = useCallback(async (e, uploadKind = 'courseware') => {
+  const handleUpload = useCallback(async (e, uploadKind = 'paper') => {
     const files = e.target.files
     if (!files.length) return
     setUploading(true)

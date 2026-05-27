@@ -41,8 +41,8 @@ class RapidOCRExecutor:
     def run(self, source_path: str | Path, pages: list[int]) -> OCREnhancementResult:
         source = Path(source_path)
         suffix = source.suffix.lower()
-        if suffix not in {".pdf", ".pptx"}:
-            raise OCRUnavailableError("RapidOCR enhancement currently supports PDF and PPTX sources only")
+        if suffix != ".pdf":
+            raise OCRUnavailableError("RapidOCR enhancement currently supports PDF sources only")
         if not pages:
             return OCREnhancementResult(status="skipped", pages=[])
 
@@ -50,26 +50,16 @@ class RapidOCRExecutor:
         page_results: list[OCRPageEnhancement] = []
         with tempfile.TemporaryDirectory(prefix="scholar_lens_ocr_") as tmp:
             work_dir = Path(tmp)
-            rendered = (
-                extract_pptx_slide_images(source, pages, work_dir)
-                if suffix == ".pptx"
-                else render_pdf_pages(source, pages, work_dir)
-            )
+            rendered = render_pdf_pages(source, pages, work_dir)
             for page in pages:
                 image_paths = rendered.get(page, [])
                 if not image_paths:
-                    reason = "pptx_no_embedded_images" if suffix == ".pptx" else "render_failed"
-                    error = (
-                        f"Slide {page} has no embedded images for lightweight PPTX OCR"
-                        if suffix == ".pptx"
-                        else f"Page {page} could not be rendered"
-                    )
                     page_results.append(OCRPageEnhancement(
                         page=page,
                         ocr_quality="failed",
                         vision_recommended=True,
-                        reason=reason,
-                        error=error,
+                        reason="render_failed",
+                        error=f"Page {page} could not be rendered",
                     ))
                     continue
                 try:
@@ -133,31 +123,6 @@ def render_pdf_pages(source_path: Path, pages: list[int], work_dir: Path) -> dic
             rendered[page_num] = [image_path]
     finally:
         doc.close()
-    return rendered
-
-
-def extract_pptx_slide_images(source_path: Path, pages: list[int], work_dir: Path) -> dict[int, list[Path]]:
-    from pptx import Presentation
-
-    rendered: dict[int, list[Path]] = {}
-    prs = Presentation(str(source_path))
-    for page_num in pages:
-        if page_num < 0 or page_num >= len(prs.slides):
-            continue
-        slide = prs.slides[page_num]
-        slide_dir = work_dir / f"slide_{page_num}"
-        slide_dir.mkdir(parents=True, exist_ok=True)
-        image_paths: list[Path] = []
-        for idx, shape in enumerate(slide.shapes):
-            image = getattr(shape, "image", None)
-            if image is None:
-                continue
-            ext = (getattr(image, "ext", "") or "png").lower()
-            image_path = slide_dir / f"image_{idx}.{ext}"
-            image_path.write_bytes(image.blob)
-            image_paths.append(image_path)
-        if image_paths:
-            rendered[page_num] = image_paths
     return rendered
 
 

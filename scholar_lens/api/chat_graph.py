@@ -102,7 +102,8 @@ def _parse_validation(raw: str) -> dict[str, Any]:
 def _build_revision_prompt(answer: str, validation: dict[str, Any], context: ChatContext, request: ChatRequest) -> str:
     suggested_correction = str(validation.get("correction") or "").strip()
     return (
-        "Revise the answer in Chinese using only the evidence. Preserve useful citations like [1]. "
+        "Revise the answer in Chinese using only the retrieved document context. "
+        "Do not expose internal excerpt labels or write numbered citations like [1] or 证据[1]. "
         "Address the validator issues and avoid adding unsupported claims.\n\n"
         f"Question:\n{request.message}\n\n"
         f"Evidence:\n{context.context_text[:4000]}\n\n"

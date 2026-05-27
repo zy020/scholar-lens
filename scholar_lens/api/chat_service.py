@@ -330,6 +330,54 @@ def _detect_answer_depth(question: str) -> str:
     return "concise"
 
 
+def _detect_evidence_policy(question: str) -> str:
+    normalized = question.lower()
+    if re.search(
+        r"\b(extend|extension|broader|compare|comparison|versus|vs\.?|outside|beyond|related work|background)\b"
+        r"|拓展|扩展|延伸|对比|比较|区别|联系|相关知识|背景知识|文档外|课外",
+        normalized,
+    ):
+        return "extension"
+    if re.search(
+        r"\b(example|examples|analogy|intuition|intuitive|beginner|explain like|why|how to understand)\b"
+        r"|例子|举例|类比|直觉|通俗|初学|入门|不理解|看不懂|怎么理解|为什么",
+        normalized,
+    ):
+        return "learning_explanation"
+    if re.search(
+        r"\b(contribution|claim|result|experiment|ablation|prove|propose|state|say|according to|paper|document|slide)\b"
+        r"|贡献|结论|实验|消融|证明|提出|文档|论文|课件|材料|作者|根据|是否",
+        normalized,
+    ):
+        return "document_grounded"
+    return "document_grounded"
+
+
+def _evidence_policy_guidance(question: str) -> str:
+    policy = _detect_evidence_policy(question)
+    guidance = {
+        "document_grounded": (
+            "Evidence policy: document_grounded. Every document claim should be grounded in the retrieved context. "
+            "Anchor claims about what the paper, slide, author, experiment, figure, or formula says in the retrieved document context. "
+            "If the evidence does not support the requested claim, say the document evidence is insufficient. "
+            "Do not refer to hidden excerpt labels or write phrases like 证据[1]; answer in natural language."
+        ),
+        "learning_explanation": (
+            "Evidence policy: learning_explanation. Start with a short 文档依据 section that summarizes the relevant document content without numbered citations. "
+            "Then, if helpful, add a clearly separated 通用背景 section for teaching examples, analogies, or intuition. "
+            "General teaching content does not need citations, but it must not be presented as something stated by the document. "
+            "Do not refer to hidden excerpt labels or write phrases like 证据[1]."
+        ),
+        "extension": (
+            "Evidence policy: extension. Start by stating what the document content covers, without numbered citations. "
+            "Then add a clearly separated 拓展说明 section for broader comparisons or background. "
+            "Mark extension content as not part of the document unless directly supported by the retrieved context. "
+            "Do not refer to hidden excerpt labels or write phrases like 证据[1]."
+        ),
+    }[policy]
+    return f"\n{guidance}\n"
+
+
 def _answer_constraint_guidance(question: str, *, has_formula_evidence: bool = False) -> str:
     intent = _detect_question_intent(question, has_formula_evidence=has_formula_evidence)
     depth = _detect_answer_depth(question)
@@ -347,10 +395,10 @@ def _answer_constraint_guidance(question: str, *, has_formula_evidence: bool = F
             "For detail questions, answer directly and avoid adding background unless it is needed to disambiguate the evidence."
         ),
         "structure": (
-            "For structure or outline questions, synthesize across cited evidence in document order and do not invent missing sections."
+            "For structure or outline questions, synthesize across retrieved excerpts in document order and do not invent missing sections."
         ),
         "method": (
-            "For method questions, explain the mechanism using cited method evidence and avoid adding implementation details not in evidence."
+            "For method questions, explain the mechanism using retrieved method context and avoid adding implementation details not in evidence."
         ),
         "concept": (
             "For concept questions, give a definition plus the key role or example supported by evidence; avoid encyclopedia-style expansion by default."
@@ -397,7 +445,7 @@ def _personalized_guidance(memory_context: str, student_level: str = "intermedia
 
 def _format_result_context(result: RetrievalResult, label: str) -> str:
     prefix = str(result.metadata.get("contextual_prefix") or "").strip()
-    parts = [f"[{label}] {result.text[:300]}"]
+    parts = [f"检索片段 {label}: {result.text[:300]}"]
     if _is_formula_hit(result) and prefix:
         parts.append(prefix[:240])
     return "\n".join(parts)
@@ -691,11 +739,12 @@ def build_chat_messages(
         question,
         has_formula_evidence=has_formula_evidence,
     )
+    evidence_policy_guidance = _evidence_policy_guidance(question)
     vision_structured_guidance = ""
     if "Visual type:" in context_text:
         vision_structured_guidance = (
             "\nVision-structured evidence guidance: Some visual evidence may be a model-generated description "
-            "of a page image, chart, table, diagram, or formula. Use it as cited evidence, but do not present "
+            "of a page image, chart, table, diagram, or formula. Use it as retrieved document context, but do not present "
             "inferred visual interpretation as verbatim source text. If chart/table/formula details are missing, say so.\n"
         )
     memory_section = ""
@@ -717,8 +766,9 @@ Student question: {question}
 {formula_guidance}
 {vision_structured_guidance}
 {answer_constraint_guidance}
+{evidence_policy_guidance}
 
-Answer in Chinese. Preserve key English terms inline when needed, but do not append a glossary, related terms, vocabulary list, or extra terminology section unless the student explicitly asks for one. Use only the evidence items that directly support your answer. Number citations using the provided evidence numbers, for example [1]. Do not cite evidence you did not use. Do not present broader implications, benefits, causes, or mechanisms as document conclusions unless they are directly stated in the cited evidence. If you add helpful general background, put it in a separate sentence explicitly labeled as general background, not as a document claim. If evidence is insufficient, say so."""
+Answer in Chinese. Preserve key English terms inline when needed, but do not append a glossary, related terms, vocabulary list, or extra terminology section unless the student explicitly asks for one. Use the retrieved document context for document-grounded claims, but do not expose internal excerpt labels or write numbered citations such as [1] or 证据[1]. Do not present broader implications, benefits, causes, or mechanisms as document conclusions unless they are directly stated in the retrieved context. Educational background, examples, analogies, and broader comparisons are allowed when helpful or requested, but must be explicitly labeled as general background, clearly separated as 通用背景 or 拓展说明, and must not be framed as document evidence."""
     return [
         SystemMessage(content=EXPLAINER_SYSTEM),
         HumanMessage(content=user_prompt),

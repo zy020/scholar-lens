@@ -1,26 +1,35 @@
 # ScholarLens
 
-ScholarLens is a local-first academic reading assistant for Chinese students reading English research papers and lecture materials. It keeps the source document visible, answers with cited evidence, supports translation and study briefs, and enhances low-quality parses with OCR and optional Vision support.
+ScholarLens is a local-first academic reading assistant for Chinese students reading English research papers and lecture materials. It keeps the source document visible, answers with retrieved document context, supports translation and document analysis, and enhances low-quality parses with OCR and optional Vision support.
 
 [中文说明](README_CN.md)
 
 ## Highlights
 
-- Evidence-first QA: answers are grounded in retrieved snippets and cite evidence indexes such as `[1]`.
-- Paper and courseware workflows: separate upload paths for research papers and courseware; courseware accepts PDF and PPTX.
+- Context-grounded QA: answers use retrieved document snippets while still allowing clearly separated educational background when helpful.
+- Explicit document type selection: a single PDF upload entry lets users choose paper or courseware before upload.
 - Bilingual learning support: Chinese explanations preserve key English terms, formulas, model names, and dataset names.
 - Parse-quality diagnostics: heuristic quality scoring recommends OCR or Vision enhancement only where needed.
-- OCR/Vision enhancement: GPU RapidOCR runs automatically for recommended pages when CUDA OCR is available; otherwise the UI prompts the user to use Vision or configure GPU OCR.
-- Formula-aware text layer: formulas and formula-like text are normalized for retrieval and explanation.
-- Semantic chunking and hybrid retrieval: section/page-aware chunks, BM25/token overlap, optional vector search, reranking, context expansion, and memory-aware retrieval hints.
-- Study tools: streaming chat, section translation, study briefs, and evidence cards, with learning memory kept as a backend personalization component.
+- Parse-quality enhancement: GPU RapidOCR runs automatically for recommended OCR pages when available; the frontend can enable LLM quality review and Vision in the Config panel and manually run parse enhancement for difficult pages.
+- Formula-aware text layer: formula-like text is normalized and tagged to improve retrieval and explanation.
+- Semantic chunking and hybrid retrieval: section/page-aware chunks, keyword/BM25 retrieval by default, optional vector search, optional model reranking, context expansion, and memory-aware retrieval hints.
+- Study tools: streaming chat, paper section translation, selected-text translation for courseware, document learning analysis, and backend learning memory for personalization.
 
 ## Roadmap
 
-- Improve PPTX understanding with full-slide rendering before OCR/Vision, especially for screenshot-like slides, dense diagrams, and mixed visual layouts.
-- Add stronger table and formula handling beyond the current formula-aware text layer, so numeric table QA and formula explanation become more reliable.
-- Move long-running parsing, OCR, Vision, and indexing work to background jobs with progress reporting for larger files.
+- Improve PDF courseware parsing for screenshot-like slides, dense diagrams, tables, formulas, and mixed visual layouts.
+- Move long-running parsing, OCR, Vision, and indexing work to background jobs with clearer progress reporting for larger files.
 - Continue improving cross-lingual retrieval quality for Chinese or mixed Chinese-English questions over English papers.
+- Further improve formula, chart, and table understanding; formulas are currently handled mainly through text normalization, while complex visual semantics still rely on Vision.
+- Improve model-call stability, retries, and task recovery so external API instability affects long workflows less.
+
+## Supported Documents
+
+- Research paper PDFs.
+- Courseware PDFs.
+- PPT, PPTX, Word, and image files are not accepted directly. Export slides or documents to PDF before upload.
+
+Paper and courseware share one upload control, but the user explicitly selects the document type before uploading. This lets ScholarLens apply different parsing, chunking, retrieval, translation, and analysis strategies.
 
 ## Architecture
 
@@ -28,18 +37,50 @@ ScholarLens is a local-first academic reading assistant for Chinese students rea
 scholar-lens/
 ├── scholar_lens/
 │   ├── api/          FastAPI app, routes, request/response schemas, chat service, and document analysis API
-│   │   └── routes/   document upload/parsing/enhancement, config, chat, study brief, and memory APIs
-│   ├── parsers/      PDF/PPTX parsing, quality assessment, semantic chunking, OCR/Vision enhancement, and formula text normalization
+│   │   └── routes/   document upload/parsing/enhancement, config, chat, document analysis, and memory APIs
+│   ├── parsers/      PDF parsing, quality assessment, semantic chunking, OCR/Vision enhancement, and formula text normalization
 │   ├── rag/          local document store, BM25/token-overlap retrieval, vector indexing, reranking, and context expansion
 │   ├── memory/       learning memory, concept state, current position, recent actions, and retrieval hints
 │   ├── agents/       LLM agent wrappers for document understanding, explanation, tutoring, and validation
 │   └── core/         settings, model factories, exceptions, circuit breaker, and token tracking infrastructure
 ├── web/
-│   └── src/          React/Vite frontend: sidebar, reader, chat, translate, study brief, and config panels
-├── scripts/          local diagnostics, real-file smoke checks, memory smoke checks, and evaluation helpers
+│   └── src/          React/Vite frontend: sidebar, reader, chat, translate, document analysis, and config panels
 ├── tests/            backend unit/integration tests and frontend utility tests
-└── data/             local runtime data for uploads, parsed documents, chunks, indexes, memory, and eval outputs
+└── data/             local runtime data for uploads, parsed documents, chunks, indexes, memory, and caches
 ```
+
+## Requirements
+
+- Python 3.11.
+- Node.js and npm for the React/Vite frontend.
+- A configured LLM for chat, translation, document learning analysis, and optional LLM parse-quality review.
+- An embedding model is recommended for vector retrieval; the system can still fall back to keyword/BM25 retrieval when embeddings are unavailable.
+- GPU OCR requires RapidOCR with ONNX Runtime CUDA support. If CUDA OCR is unavailable, OCR is paused; manual parse enhancement can still use LLM quality review and Vision enhancement when those models are configured.
+
+## Configuration
+
+Model settings can be provided through `.env` or updated from the web Config panel. Shared `API_KEY` and `BASE_URL` are inherited by LLM, embedding, reranker, and Vision models unless a model-specific override is configured.
+
+Common settings include:
+
+- `LLM__MODEL` for chat, translation, document analysis, and optional LLM quality review.
+- `EMBEDDING__MODEL` for vector indexing and retrieval.
+- `RERANKER__MODEL` for optional model-based reranking.
+- `VISION__MODEL` for optional Vision-based parse enhancement.
+
+## Data & Privacy
+
+ScholarLens stores uploaded files, parsed documents, chunks, indexes, cached analysis, and memory data locally under `data/` by default. When LLM, embedding, reranker, or Vision features are enabled, the relevant text, query, retrieved context, or selected page images may be sent to the configured model provider.
+
+## Limitations
+
+- Direct PPT/PPTX upload is not supported; export slides to PDF first.
+- Screenshot-heavy lecture PDFs, dense visual diagrams, complex tables, and formula-heavy pages may require Vision enhancement for better understanding.
+- Formula understanding currently relies mostly on text normalization, LaTeX/symbol preservation, and retrieval augmentation; it is not a full formula OCR or automatic derivation system.
+- Chart and table parsing uses lightweight structure detection plus text enhancement; complex visual relations still need Vision model support.
+- Large PDFs can take noticeable time to parse, enhance, and index because long-running work is still handled in the request flow.
+- The project is currently best suited as a local single-user learning tool; multi-user authorization, job queues, and cloud deployment governance are not implemented.
+- The local evaluation set is not included because it contains private courseware examples.
 
 ## Quick Start
 
@@ -74,40 +115,21 @@ npm run dev
 Vite prints the local frontend URL, typically:
 
 ```text
-http://localhost:5173
+http://localhost:3000
 ```
-
-## Demo Flow
-
-Use a research paper PDF or lecture PDF/PPTX.
-
-1. Upload a paper through the paper entry, or upload courseware through the courseware entry.
-2. Wait until the document status becomes `ready`.
-3. GPU OCR enhancement runs automatically for pages recommended by quality diagnostics when available. If GPU OCR is unavailable, the UI prompts for Vision or GPU OCR configuration. Vision and LLM quality review can be enabled in Config when stronger enhancement is needed.
-4. Open Reader and select a section.
-5. Ask a question in Chat, for example: `这个 attention 公式里的 Q、K、V 分别表示什么？`
-6. Watch the Chinese answer stream and expand evidence to verify citations.
-7. Use Translate for selected sections or pasted text.
-8. Open Study Brief for a structured learning summary.
-9. Continue asking follow-up questions; backend learning memory keeps continuity and personalization without appearing as a separate workspace panel.
 
 ## Evaluation
 
-ScholarLens was evaluated locally on a self-built 30-question high-confidence QA set covering five documents: three papers (Transformer, BERT, and a GNN survey) and two lecture files (one PDF and one PPTX). The questions cover factual lookup, method understanding, comparison, formula explanation, cross-lingual queries, and lecture-specific structure or figure understanding.
+ScholarLens was evaluated locally for RAG on a self-built 30-question high-confidence QA set covering five documents: three papers (Transformer, BERT, and a GNN survey) and two lecture PDFs. The questions cover factual lookup, method understanding, comparison, formula explanation, cross-lingual queries, and lecture-specific structure or figure understanding. The dataset is not published because it includes private courseware.
 
 | Metric | Result |
 | --- | ---: |
 | Generation success rate | 100% |
 | Judge success rate | 100% |
-| Citation rate | 96.7% |
 | Empty context rate | 0.0% |
 | Correctness | 3.37 / 5 |
 | Faithfulness | 4.10 / 5 |
-| Evidence quality | 3.67 / 5 |
 | Completeness | 3.03 / 5 |
-| Retrieval hit@5 | 16.7% |
-| Context hit@5 | 16.7% |
-| MRR@5 | 0.15 |
 
 ## License
 

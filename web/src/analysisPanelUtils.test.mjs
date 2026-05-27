@@ -18,6 +18,7 @@ test('analysisStatusLabel formats missing parser unavailable and llm states', ()
 })
 
 test('parse quality helpers format parser diagnostics', () => {
+  assert.equal(parseQualityStatusLabel('enhanced_completed'), '已完成解析增强')
   assert.equal(parseQualityStatusLabel('needs_enhancement'), '需要增强解析')
   assert.deepEqual(
     parseQualityPageItems({
@@ -25,8 +26,9 @@ test('parse quality helpers format parser diagnostics', () => {
         { page: 2, page_label: '第 3 页', quality: 'weak', recommended_action: 'ocr', overall_score: 0.34 },
       ],
     }),
-    [{ key: '2-ocr', pageLabel: '第 3 页', quality: 'weak', action: '建议 OCR', score: '0.34', preview: '' }],
+    [{ key: '2-ocr', pageLabel: '第 3 页', quality: 'weak', action: '低文本页', score: '0.34', preview: '' }],
   )
+  assert.equal(parseQualityPageItems({ parse_quality_pages: [{ page: 17, recommended_action: 'ocr', overall_score: 0 }] })[0].score, '')
 })
 
 test('termPreview formats bilingual terms', () => {

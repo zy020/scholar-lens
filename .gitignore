@@ -10,14 +10,12 @@ coverage.json
 htmlcov/
 *.log
 
-data/
+data/*
+!data/.gitkeep
 *.egg-info/
 dist/
 build/
 node_modules/
-scripts/
-tests/unit/test_memory_retrieval_smoke_script.py
-tests/unit/test_script_document_store.py
 web/dist/
 web/node_modules/
 web/data/

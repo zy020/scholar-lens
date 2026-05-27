@@ -129,7 +129,7 @@ def _is_document_image_based(doc: ParsedDocument, low_text_pages: list[int]) -> 
         if _page_text_len(page) <= NEAR_EMPTY_CHARS
     ]
     return (
-        doc.doc_subtype in {"slides_pdf", "courseware_pptx"}
+        doc.doc_subtype == "slides_pdf"
         and total_pages >= IMAGE_BASED_MIN_PAGES
         and len(low_text_pages) / total_pages >= IMAGE_BASED_LOW_TEXT_RATIO
         and len(near_empty_pages) / total_pages >= IMAGE_BASED_NEAR_EMPTY_RATIO

@@ -17,7 +17,7 @@ class FakeLLM:
         text = "\n".join(str(getattr(message, "content", message)) for message in messages)
         self.calls.append(text)
         if "Return JSON only" in text:
-            return FakeResponse('{"passed": false, "issues": ["missing citation"], "correction": "修正后的回答 [1]"}')
+            return FakeResponse('{"passed": false, "issues": ["needs clearer grounding"], "correction": "修正后的回答"}')
         return FakeResponse("初始回答")
 
 
@@ -93,7 +93,7 @@ async def test_chat_graph_deep_mode_validates_and_applies_correction(tmp_path):
         llm=llm,
     )
 
-    assert result.content == "修正后的回答 [1]"
+    assert result.content == "修正后的回答"
     assert result.validation["passed"] is False
     assert len(llm.calls) == 2
 
@@ -110,7 +110,7 @@ async def test_chat_validation_graph_stops_before_revision(tmp_path):
 
     assert result.initial_answer == "初始回答"
     assert result.validation["passed"] is False
-    assert result.validation["correction"] == "修正后的回答 [1]"
+    assert result.validation["correction"] == "修正后的回答"
     assert len(llm.calls) == 2
 
 

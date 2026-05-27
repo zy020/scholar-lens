@@ -61,7 +61,7 @@ def diagnose_text_quality(
         notes.append("当前 PDF 疑似图片型课件，文本抽取不足，建议启用 OCR 或 Vision Model。")
     elif avg_chars < 220 or raw_len < 1000:
         quality = "weak"
-        notes.append("当前 PDF 可抽取文本偏少，Study Brief 将使用保守模式，避免编造细节。")
+        notes.append("当前 PDF 可抽取文本偏少，文档学习分析将使用保守模式，避免编造细节。")
     else:
         quality = "good"
 

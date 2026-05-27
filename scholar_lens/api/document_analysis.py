@@ -171,28 +171,34 @@ def _build_parse_quality_analysis_response(store: DocumentStore, doc_id: str) ->
     if doc is None or not qualities:
         return DocumentAnalysisDetailResponse(doc_id=doc_id)
 
+    enhanced_doc = store.load_parsed_document(doc_id, enhanced=True)
+    enhancement_completed = bool(
+        enhanced_doc and any(getattr(page, "enhanced", False) for page in enhanced_doc.pages)
+    )
     weak_items = [
         item for item in qualities
         if str(item.get("quality", "")) in {"weak", "failed"}
         or str(item.get("recommended_action", "")) in {"ocr", "vision"}
     ]
     recommended_ocr_pages = list(getattr(doc, "ocr_recommended_pages", []) or [])
-    status = "needs_enhancement" if weak_items or recommended_ocr_pages else "usable"
+    status = "enhanced_completed" if enhancement_completed else ("needs_enhancement" if weak_items or recommended_ocr_pages else "usable")
     warnings: list[str] = []
     actions: list[str] = []
-    if status == "needs_enhancement":
+    if status == "enhanced_completed":
+        actions.append("解析增强已完成，当前阅读、检索和问答将使用增强后的解析结果。")
+    elif status == "needs_enhancement":
         warnings.append("部分页面解析质量偏低，检索和问答可能遗漏图片、图表或扫描文本。")
-    if recommended_ocr_pages:
-        actions.append("建议执行 OCR 增强并应用增强结果。")
-    if any(item.get("recommended_action") == "vision" for item in qualities):
+    if status != "enhanced_completed" and recommended_ocr_pages:
+        actions.append("系统已按当前配置完成可用的自动增强；若仍偏低，可继续使用解析增强做进一步检查。")
+    if status != "enhanced_completed" and any(item.get("recommended_action") == "vision" for item in qualities):
         actions.append("部分页面建议使用 Vision 解析。")
-    elif recommended_ocr_pages:
-        actions.append("OCR 后如仍有图表、公式或乱码页面，可继续使用 Vision。")
+    elif status != "enhanced_completed" and recommended_ocr_pages:
+        actions.append("如仍有图表、公式或乱码页面，可配置 Vision 后进行进一步增强。")
     if not actions:
         actions.append("当前解析质量可用于基础阅读和检索。")
 
     page_items = []
-    for item in weak_items[:8]:
+    for item in ([] if enhancement_completed else weak_items[:8]):
         page = item.get("page_start", item.get("page", ""))
         if isinstance(page, str) and page.isdigit():
             page = int(page)
@@ -215,9 +221,13 @@ def _build_parse_quality_analysis_response(store: DocumentStore, doc_id: str) ->
         estimated_reading_time=0,
         parse_quality_status=status,
         parse_quality_message=(
-            "解析质量偏低，建议先完成增强解析。"
-            if status == "needs_enhancement"
-            else "解析质量可接受。"
+            "解析增强已完成。"
+            if status == "enhanced_completed"
+            else (
+                "解析质量偏低，部分页面可能需要进一步增强。"
+                if status == "needs_enhancement"
+                else "解析质量可接受。"
+            )
         ),
         parse_quality_warnings=warnings,
         parse_quality_actions=actions,
