@@ -13,7 +13,7 @@ ScholarLens is a local-first academic reading assistant for Chinese students rea
 - OCR/Vision enhancement: GPU RapidOCR runs automatically for recommended pages when CUDA OCR is available; otherwise the UI prompts the user to use Vision or configure GPU OCR.
 - Formula-aware text layer: formulas and formula-like text are normalized for retrieval and explanation.
 - Semantic chunking and hybrid retrieval: section/page-aware chunks, BM25/token overlap, optional vector search, reranking, context expansion, and memory-aware retrieval hints.
-- Study tools: streaming chat, section translation, study briefs, evidence cards, and a learning memory panel.
+- Study tools: streaming chat, section translation, study briefs, and evidence cards, with learning memory kept as a backend personalization component.
 
 ## Roadmap
 
@@ -35,7 +35,7 @@ scholar-lens/
 │   ├── agents/       LLM agent wrappers for document understanding, explanation, tutoring, and validation
 │   └── core/         settings, model factories, exceptions, circuit breaker, and token tracking infrastructure
 ├── web/
-│   └── src/          React/Vite frontend: sidebar, reader, chat, translate, study brief, memory, and config panels
+│   └── src/          React/Vite frontend: sidebar, reader, chat, translate, study brief, and config panels
 ├── scripts/          local diagnostics, real-file smoke checks, memory smoke checks, and evaluation helpers
 ├── tests/            backend unit/integration tests and frontend utility tests
 └── data/             local runtime data for uploads, parsed documents, chunks, indexes, memory, and eval outputs
@@ -89,7 +89,7 @@ Use a research paper PDF or lecture PDF/PPTX.
 6. Watch the Chinese answer stream and expand evidence to verify citations.
 7. Use Translate for selected sections or pasted text.
 8. Open Study Brief for a structured learning summary.
-9. Open Memory to inspect recent actions and concept status; clear session/document memory when needed.
+9. Continue asking follow-up questions; backend learning memory keeps continuity and personalization without appearing as a separate workspace panel.
 
 ## Evaluation
 

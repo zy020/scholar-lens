@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import { explainText, getSectionText } from './api'
-import { buildSectionCacheKey, buildSectionTranslationPrompt } from './translationUtils'
+import { buildSectionCacheKey, buildSectionLabel, buildSectionTranslationPrompt, isCoursewareDocument } from './translationUtils'
 import SectionsPanel from './SectionsPanel'
 import 'katex/dist/katex.min.css'
 
@@ -81,25 +81,6 @@ export default function TranslatePanel({ doc, sections, activeSectionId, onSelec
     }
   }, [currentSection, doExplain, doc.doc_id])
 
-  const explainSection = useCallback(async () => {
-    if (!currentSection) return
-    setTranslating(true)
-    setTranslation('')
-    try {
-      const data = await getSectionText(doc.doc_id, currentSection.section_id)
-      const sectionText = data.text || currentSection.gist || ''
-      if (!sectionText.trim()) {
-        setTranslation('该章节无可解释的文本内容')
-        return
-      }
-      await doExplain(`Explain the following section in Chinese for a university student. Use concise paragraphs. Preserve model names, acronyms, formulas, and key technical terms in English when translating would lose precision.\n\nSection: ${currentSection.title}\n\n${sectionText}`, 'explain', '', currentSection.section_id)
-    } catch (err) {
-      setTranslation(`解释失败: ${err.message}`)
-    } finally {
-      setTranslating(false)
-    }
-  }, [currentSection, doExplain, doc.doc_id])
-
   const translatePastedText = useCallback(() => {
     const text = translateInput.trim()
     if (!text) return
@@ -131,16 +112,14 @@ export default function TranslatePanel({ doc, sections, activeSectionId, onSelec
             onSelectSection={onSelectSection || (() => {})}
             maxInitialLevel={1}
             compact
+            doc={doc}
           />
         )}
       </div>
       {currentSection && (
         <div className="translate-actions">
           <button onClick={translateSection} disabled={translating}>
-            翻译当前章节
-          </button>
-          <button onClick={explainSection} disabled={translating}>
-            解释当前章节
+            {isCoursewareDocument(doc) ? `翻译 ${buildSectionLabel(currentSection, doc)}` : '翻译当前章节'}
           </button>
         </div>
       )}

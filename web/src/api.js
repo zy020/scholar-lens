@@ -102,27 +102,6 @@ export async function getNotes(docId) {
   return handleError(res).then(r => r.json())
 }
 
-export async function getMemorySnapshot(docId = '') {
-  const suffix = docId ? `?doc_id=${encodeURIComponent(docId)}` : ''
-  const res = await fetch(`${BASE}/memory${suffix}`)
-  return handleError(res).then(r => r.json())
-}
-
-export async function clearSessionMemory() {
-  const res = await fetch(`${BASE}/memory/session`, { method: 'DELETE' })
-  return handleError(res).then(r => r.json())
-}
-
-export async function clearDocumentMemory(docId) {
-  const res = await fetch(`${BASE}/memory/document?doc_id=${encodeURIComponent(docId)}`, { method: 'DELETE' })
-  return handleError(res).then(r => r.json())
-}
-
-export async function clearAllMemory() {
-  const res = await fetch(`${BASE}/memory/all`, { method: 'DELETE' })
-  return handleError(res).then(r => r.json())
-}
-
 export async function explainText(payload) {
   const { mode = 'explain', ...rest } = payload || {}
   const res = await fetch(`${BASE}/chat/explain`, {

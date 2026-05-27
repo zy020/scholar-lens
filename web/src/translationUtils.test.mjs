@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { buildSectionCacheKey, buildSectionTranslationPrompt } from './translationUtils.js'
+import { buildSectionCacheKey, buildSectionLabel, buildSectionTranslationPrompt, isCoursewareDocument } from './translationUtils.js'
 
 test('section translation prompt uses full section text and preserves technical terms', () => {
   const text = 'Transformer-XL uses recurrence.\n'.repeat(40)
@@ -19,4 +19,19 @@ test('section cache key changes when full section text changes', () => {
     buildSectionCacheKey('doc', 'sec', 'translate', 'short'),
     buildSectionCacheKey('doc', 'sec', 'translate', 'a much longer section text'),
   )
+})
+
+test('section cache key changes for same-length content changes', () => {
+  assert.notEqual(
+    buildSectionCacheKey('doc', 'sec', 'translate', 'alpha beta'),
+    buildSectionCacheKey('doc', 'sec', 'translate', 'gamma zeta'),
+  )
+})
+
+test('courseware sections use slide labels instead of paper numbering', () => {
+  const doc = { doc_type: 'courseware_pptx' }
+
+  assert.equal(isCoursewareDocument(doc), true)
+  assert.equal(buildSectionLabel({ section_id: 'slide_2', page_start: 2, title: 'Outline' }, doc), 'Slide 3')
+  assert.equal(buildSectionLabel({ section_id: 'intro', page_start: 0, title: 'Introduction' }, { doc_type: 'research_paper' }), 'Introduction')
 })

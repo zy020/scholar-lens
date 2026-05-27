@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react'
+import { buildSectionLabel, isCoursewareDocument } from './translationUtils'
 
 function numberSections(sections) {
   const counters = []
@@ -36,7 +37,9 @@ export default function SectionsPanel({
   onSelectSection,
   maxInitialLevel = Infinity,
   compact = false,
+  doc = {},
 }) {
+  const courseware = isCoursewareDocument(doc)
   const numbered = useMemo(() => numberSections(sections), [sections])
   const tree = useMemo(() => buildTree(numbered), [numbered])
 
@@ -90,8 +93,9 @@ export default function SectionsPanel({
               </span>
             )}
             {!s.isParent && <span className="section-toggle-spacer" />}
-            <span className="section-number">{s.displayNumber || `§${s.index + 1}`}</span>
-            <span className="section-title-text">{s.title}</span>
+            {!courseware && <span className="section-number">{s.displayNumber || `§${s.index + 1}`}</span>}
+            {courseware && <span className="section-number">{buildSectionLabel(s, doc)}</span>}
+            <span className="section-title-text">{courseware ? (s.gist || '') : s.title}</span>
             {s.page_start != null && <span className="section-page">第 {Number(s.page_start) + 1} 页</span>}
           </button>
         ))}

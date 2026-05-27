@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 
@@ -24,6 +25,7 @@ router = APIRouter()
 
 _runtime_generation = 0
 _api_circuit_breaker = CircuitBreaker(name="llm-api", cooldown_seconds=30.0)
+TRANSLATION_CACHE_PROMPT_VERSION = "translate-section-v1"
 
 
 async def _stream_llm_tokens_with_initial_retry(llm_factory, messages, attempts: int = 2):
@@ -70,6 +72,53 @@ def _section_title(store, doc_id: str, section_id: str) -> str:
     sections = store.load_sections(doc_id)
     section = next((s for s in sections if s.section_id == section_id), None)
     return section.title if section else ""
+
+
+def _translation_cache_key(request: ChatRequest, model: str) -> str:
+    text_hash = hashlib.sha256(request.message.encode("utf-8")).hexdigest()
+    parts = [
+        request.doc_id or "",
+        request.section_id or "",
+        request.mode,
+        model or "",
+        TRANSLATION_CACHE_PROMPT_VERSION,
+        text_hash,
+    ]
+    return "|".join(parts)
+
+
+def _translation_cache_path(doc_id: str):
+    if not doc_id:
+        return None
+    try:
+        store = get_document_store()
+        if store.get(doc_id) is None:
+            return None
+        return store.document_dir(doc_id) / "translation_cache.json"
+    except Exception:
+        logger.warning("Translation cache path unavailable", exc_info=True)
+        return None
+
+
+def _load_translation_cache(doc_id: str) -> dict:
+    path = _translation_cache_path(doc_id)
+    if path is None or not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        logger.warning("Translation cache read failed", exc_info=True)
+        return {}
+
+
+def _save_translation_cache(doc_id: str, cache: dict) -> None:
+    path = _translation_cache_path(doc_id)
+    if path is None:
+        return
+    try:
+        path.write_text(json.dumps(cache, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        logger.warning("Translation cache write failed", exc_info=True)
 
 
 async def _memory_context(doc_id: str = "") -> str:
@@ -308,6 +357,13 @@ async def explain_text(request: ChatRequest):
         user_prompt = f"Explain this in Chinese:\n\n{request.message}"
 
     try:
+        cache_key = ""
+        if request.mode == "translate" and request.doc_id and request.section_id:
+            cache_key = _translation_cache_key(request, settings.llm.model)
+            cached = _load_translation_cache(request.doc_id).get(cache_key)
+            if isinstance(cached, dict) and cached.get("content"):
+                return ChatMessage(role="assistant", content=str(cached["content"]))
+
         factory = ChatLLMFactory.from_settings(settings)
         llm = factory.create(streaming=False)
         response = await llm.ainvoke([
@@ -315,7 +371,19 @@ async def explain_text(request: ChatRequest):
             HumanMessage(content=user_prompt),
         ])
         await _api_circuit_breaker.record_success()
-        return ChatMessage(role="assistant", content=response.content)
+        content = str(response.content)
+        if cache_key:
+            cache = _load_translation_cache(request.doc_id)
+            cache[cache_key] = {
+                "doc_id": request.doc_id,
+                "section_id": request.section_id,
+                "mode": request.mode,
+                "model": settings.llm.model,
+                "prompt_version": TRANSLATION_CACHE_PROMPT_VERSION,
+                "content": content,
+            }
+            _save_translation_cache(request.doc_id, cache)
+        return ChatMessage(role="assistant", content=content)
     except Exception:
         await _api_circuit_breaker.record_failure()
         return ChatMessage(role="assistant", content="Explanation failed. Please try again.")

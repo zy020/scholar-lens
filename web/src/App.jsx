@@ -5,7 +5,6 @@ import ReaderPanel from './ReaderPanel'
 import TranslatePanel from './TranslatePanel'
 import NotesPanel from './NotesPanel'
 import ConfigPanel from './ConfigPanel'
-import MemoryPanel from './MemoryPanel'
 import { listDocuments, uploadPaperDocument, uploadCoursewareDocument, deleteDocument, getSections } from './api'
 import { formatUploadError } from './uploadErrorUtils'
 import { canShowWorkspace } from './workspaceVisibility'
@@ -19,7 +18,6 @@ const WORKSPACE_TABS = [
   { id: 'chat', label: '问答' },
   { id: 'translate', label: '翻译' },
   { id: 'study', label: '学习简报' },
-  { id: 'memory', label: '记忆' },
   { id: 'config', label: '配置' },
 ]
 
@@ -202,9 +200,6 @@ export default function App() {
                 </div>
                 <div className={`tab-panel ${tab === 'study' ? 'active' : ''}`} hidden={tab !== 'study'}>
                   <NotesPanel key={activeDoc.doc_id || 'empty'} doc={activeDoc} docId={active} onDocumentUpdated={handleDocumentUpdated} />
-                </div>
-                <div className={`tab-panel ${tab === 'memory' ? 'active' : ''}`} hidden={tab !== 'memory'}>
-                  <MemoryPanel docId={active} docName={activeDoc.name || ''} />
                 </div>
                 <div className={`tab-panel ${tab === 'config' ? 'active' : ''}`} hidden={tab !== 'config'}>
                   <ConfigPanel />

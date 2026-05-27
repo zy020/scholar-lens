@@ -8,5 +8,6 @@ test('section translation and explanation use the selected section id explicitly
   assert.match(source, /explicitSectionId = activeSectionId/)
   assert.match(source, /section_id: sectionId/)
   assert.match(source, /doExplain\(prompt, 'translate', cacheKey, currentSection\.section_id\)/)
-  assert.match(source, /doExplain\(`Explain[\s\S]+currentSection\.section_id\)/)
+  assert.doesNotMatch(source, /解释当前章节/)
+  assert.doesNotMatch(source, /explainSection/)
 })
