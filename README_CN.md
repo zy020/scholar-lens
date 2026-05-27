@@ -2,7 +2,7 @@
 
 ScholarLens 是一个面向中文学生阅读英文论文和课件的本地优先学术阅读助手。它保留原文阅读界面，基于检索到的文档上下文回答问题，支持翻译、文档分析，并为低质量解析结果提供 OCR 和可选 Vision 增强。
 
-[English README](README.md)
+[English](README.md)
 
 ## 功能亮点
 

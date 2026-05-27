@@ -2,7 +2,7 @@
 
 ScholarLens is a local-first academic reading assistant for Chinese students reading English research papers and lecture materials. It keeps the source document visible, answers with retrieved document context, supports translation and document analysis, and enhances low-quality parses with OCR and optional Vision support.
 
-[中文说明](README_CN.md)
+[中文](README_CN.md)
 
 ## Highlights
 
