@@ -14,31 +14,31 @@ def test_detect_rapidocr_uninstalled(monkeypatch):
     assert capability.available_actions == ["vision"]
 
 
-def test_detect_rapidocr_cpu_choice_when_gpu_unavailable(monkeypatch):
+def test_detect_rapidocr_disallows_cpu_when_gpu_unavailable(monkeypatch):
     monkeypatch.setattr(
         "importlib.util.find_spec",
-        lambda name: object() if name == "rapidocr_onnxruntime" else None,
+        lambda name: object() if name == "rapidocr" else None,
     )
 
     capability = detect_rapidocr_capability(vision_available=True, gpu_available=False)
 
     assert capability.installed is True
     assert capability.gpu_available is False
-    assert capability.cpu_available is True
-    assert capability.recommended_mode == "ask_user"
-    assert capability.available_actions == ["cpu_ocr", "vision"]
+    assert capability.cpu_available is False
+    assert capability.recommended_mode == "vision_only"
+    assert capability.available_actions == ["vision"]
 
 
 def test_detect_rapidocr_gpu_available(monkeypatch):
     monkeypatch.setattr(
         "importlib.util.find_spec",
-        lambda name: object() if name == "rapidocr_onnxruntime" else None,
+        lambda name: object() if name == "rapidocr" else None,
     )
 
     capability = detect_rapidocr_capability(vision_available=False, gpu_available=True)
 
     assert capability.recommended_mode == "gpu_ocr"
-    assert capability.available_actions == ["gpu_ocr", "cpu_ocr"]
+    assert capability.available_actions == ["gpu_ocr"]
 
 
 def test_detect_rapidocr_gpu_provider_from_onnxruntime(monkeypatch):
@@ -49,7 +49,7 @@ def test_detect_rapidocr_gpu_provider_from_onnxruntime(monkeypatch):
 
     monkeypatch.setattr(
         "importlib.util.find_spec",
-        lambda name: object() if name in {"rapidocr_onnxruntime", "onnxruntime"} else None,
+        lambda name: object() if name in {"rapidocr", "onnxruntime"} else None,
     )
     monkeypatch.setitem(__import__("sys").modules, "onnxruntime", FakeOnnxRuntime)
 

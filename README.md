@@ -10,7 +10,7 @@ ScholarLens is a local-first academic reading assistant for Chinese students rea
 - Paper and courseware workflows: separate upload paths for research papers and courseware; courseware accepts PDF and PPTX.
 - Bilingual learning support: Chinese explanations preserve key English terms, formulas, model names, and dataset names.
 - Parse-quality diagnostics: heuristic quality scoring recommends OCR or Vision enhancement only where needed.
-- OCR/Vision enhancement: RapidOCR is enabled by default after upload; Vision can be enabled in the Config panel as a stronger escalation path.
+- OCR/Vision enhancement: GPU RapidOCR runs automatically for recommended pages when CUDA OCR is available; otherwise the UI prompts the user to use Vision or configure GPU OCR.
 - Formula-aware text layer: formulas and formula-like text are normalized for retrieval and explanation.
 - Semantic chunking and hybrid retrieval: section/page-aware chunks, BM25/token overlap, optional vector search, reranking, context expansion, and memory-aware retrieval hints.
 - Study tools: streaming chat, section translation, study briefs, evidence cards, and a learning memory panel.
@@ -83,7 +83,7 @@ Use a research paper PDF or lecture PDF/PPTX.
 
 1. Upload a paper through the paper entry, or upload courseware through the courseware entry.
 2. Wait until the document status becomes `ready`.
-3. OCR enhancement runs automatically for pages recommended by quality diagnostics. Vision and LLM quality review can be enabled in Config when stronger enhancement is needed.
+3. GPU OCR enhancement runs automatically for pages recommended by quality diagnostics when available. If GPU OCR is unavailable, the UI prompts for Vision or GPU OCR configuration. Vision and LLM quality review can be enabled in Config when stronger enhancement is needed.
 4. Open Reader and select a section.
 5. Ask a question in Chat, for example: `这个 attention 公式里的 Q、K、V 分别表示什么？`
 6. Watch the Chinese answer stream and expand evidence to verify citations.

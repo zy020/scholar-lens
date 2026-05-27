@@ -1,4 +1,6 @@
 from pathlib import Path
+import sys
+import types
 
 import pytest
 
@@ -28,6 +30,32 @@ def test_executor_rejects_non_pdf_source(tmp_path):
 
     with pytest.raises(OCRUnavailableError):
         executor.run(source, pages=[0])
+
+
+def test_executor_rejects_gpu_ocr_when_cuda_provider_unavailable(monkeypatch):
+    monkeypatch.setattr("scholar_lens.parsers.ocr_executor.ocr_gpu_available", lambda: False)
+    executor = RapidOCRExecutor()
+
+    with pytest.raises(OCRUnavailableError, match="GPU OCR"):
+        executor._load_ocr_callable()
+
+
+def test_executor_loads_rapidocr_with_cuda_params(monkeypatch):
+    captured = {}
+
+    class FakeRapidOCR:
+        def __init__(self, params=None):
+            captured["params"] = params
+
+    fake_module = types.SimpleNamespace(RapidOCR=FakeRapidOCR)
+    monkeypatch.setattr("scholar_lens.parsers.ocr_executor.ocr_gpu_available", lambda: True)
+    monkeypatch.setitem(sys.modules, "rapidocr", fake_module)
+
+    executor = RapidOCRExecutor()
+    ocr = executor._load_ocr_callable()
+
+    assert isinstance(ocr, FakeRapidOCR)
+    assert captured["params"] == {"EngineConfig.onnxruntime.use_cuda": True}
 
 
 def test_executor_runs_fake_ocr_and_evaluates_quality(tmp_path, monkeypatch):

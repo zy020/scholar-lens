@@ -69,9 +69,9 @@ class TestSchemas:
             ocr_engine="rapidocr",
             ocr_installed=True,
             ocr_gpu_available=False,
-            ocr_cpu_available=True,
-            ocr_recommended_mode="ask_user",
-            available_actions=["cpu_ocr", "vision"],
+            ocr_cpu_available=False,
+            ocr_recommended_mode="vision_only",
+            available_actions=["vision"],
         )
 
         data = resp.model_dump()
@@ -81,8 +81,8 @@ class TestSchemas:
         assert data["vision_possible"] is True
         assert data["vision_enhancement_enabled"] is True
         assert data["ocr_engine"] == "rapidocr"
-        assert data["ocr_recommended_mode"] == "ask_user"
-        assert data["available_actions"] == ["cpu_ocr", "vision"]
+        assert data["ocr_recommended_mode"] == "vision_only"
+        assert data["available_actions"] == ["vision"]
 
     def test_parse_quality_response_schema(self):
         from scholar_lens.api.schemas import ParseQualityResponse

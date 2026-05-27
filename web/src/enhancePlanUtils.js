@@ -36,9 +36,9 @@ export function visionPlanLabel(plan) {
 
 export function ocrCapabilityLabel(plan) {
   if (plan?.ocr_installed && plan?.ocr_gpu_available) return 'GPU OCR 可用'
-  if (plan?.ocr_installed && plan?.ocr_cpu_available) {
-    if ((plan.available_actions || []).includes('vision')) return 'GPU OCR 不可用，可选择 CPU OCR 或 Vision'
-    return 'GPU OCR 不可用，可选择 CPU OCR'
+  if (plan?.ocr_installed && !plan?.ocr_gpu_available) {
+    if ((plan.available_actions || []).includes('vision')) return 'GPU OCR 不可用，可使用 Vision'
+    return 'GPU OCR 不可用，OCR 已暂停'
   }
   if ((plan?.available_actions || []).includes('vision')) return 'RapidOCR 未安装，可使用 Vision'
   return 'RapidOCR 未安装'

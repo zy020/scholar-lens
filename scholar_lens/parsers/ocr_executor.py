@@ -100,15 +100,20 @@ class RapidOCRExecutor:
         return OCREnhancementResult(status=status, pages=page_results)
 
     def _load_ocr_callable(self) -> Callable[[str], Any]:
-        try:
-            from rapidocr_onnxruntime import RapidOCR
-        except ImportError:
-            try:
-                from rapidocr import RapidOCR
-            except ImportError as exc:
-                raise OCRUnavailableError("RapidOCR is not installed") from exc
+        if self._prefer_gpu and not ocr_gpu_available():
+            raise OCRUnavailableError(
+                "GPU OCR is unavailable. Install/configure onnxruntime-gpu with CUDAExecutionProvider, "
+                "or enable Vision enhancement for difficult pages."
+            )
+        if not self._prefer_gpu:
+            raise OCRUnavailableError("CPU OCR is disabled. Configure GPU OCR or use Vision enhancement.")
 
-        engine = RapidOCR()
+        try:
+            from rapidocr import RapidOCR
+        except ImportError as exc:
+            raise OCRUnavailableError("RapidOCR is not installed") from exc
+
+        engine = RapidOCR(params={"EngineConfig.onnxruntime.use_cuda": True})
         return engine
 
 
@@ -184,3 +189,14 @@ def _looks_like_ocr_line(value: list | tuple) -> bool:
         and isinstance(value[1], str)
         and not isinstance(value[0], str)
     )
+
+
+def ocr_gpu_available() -> bool:
+    try:
+        import onnxruntime as ort
+    except Exception:
+        return False
+    try:
+        return "CUDAExecutionProvider" in ort.get_available_providers()
+    except Exception:
+        return False

@@ -21,17 +21,16 @@ def detect_rapidocr_capability(
     installed = _rapidocr_installed()
     detected_gpu = _onnx_cuda_available() if gpu_available is None else gpu_available
     gpu_ok = bool(installed and detected_gpu is True)
-    cpu_ok = installed
+    cpu_ok = False
 
     actions: list[str] = []
     recommended_mode = "unavailable"
 
     if gpu_ok:
-        actions.extend(["gpu_ocr", "cpu_ocr"])
+        actions.append("gpu_ocr")
         recommended_mode = "gpu_ocr"
-    elif cpu_ok:
-        actions.append("cpu_ocr")
-        recommended_mode = "ask_user" if vision_available else "cpu_ocr"
+    elif installed and vision_available:
+        recommended_mode = "vision_only"
 
     if vision_available:
         actions.append("vision")
@@ -48,10 +47,7 @@ def detect_rapidocr_capability(
 
 
 def _rapidocr_installed() -> bool:
-    return (
-        importlib.util.find_spec("rapidocr_onnxruntime") is not None
-        or importlib.util.find_spec("rapidocr") is not None
-    )
+    return importlib.util.find_spec("rapidocr") is not None
 
 
 def _onnx_cuda_available() -> bool:

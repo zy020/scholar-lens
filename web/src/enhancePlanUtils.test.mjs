@@ -52,10 +52,10 @@ test('ocrCapabilityLabel formats gpu cpu and vision choices', () => {
     ocrCapabilityLabel({
       ocr_installed: true,
       ocr_gpu_available: false,
-      ocr_cpu_available: true,
-      available_actions: ['cpu_ocr', 'vision'],
+      ocr_cpu_available: false,
+      available_actions: ['vision'],
     }),
-    'GPU OCR 不可用，可选择 CPU OCR 或 Vision',
+    'GPU OCR 不可用，可使用 Vision',
   )
   assert.equal(ocrCapabilityLabel({ ocr_installed: false, available_actions: ['vision'] }), 'RapidOCR 未安装，可使用 Vision')
 })

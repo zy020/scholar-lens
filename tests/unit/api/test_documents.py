@@ -457,9 +457,9 @@ class TestDocumentRoutes:
             engine = "rapidocr"
             installed = True
             gpu_available = False
-            cpu_available = True
-            recommended_mode = "ask_user"
-            available_actions = ["cpu_ocr", "vision"]
+            cpu_available = False
+            recommended_mode = "vision_only"
+            available_actions = ["vision"]
 
         monkeypatch.setattr(documents, "detect_rapidocr_capability", lambda vision_available=False: FakeCapability())
 
@@ -470,9 +470,9 @@ class TestDocumentRoutes:
         assert data["ocr_engine"] == "rapidocr"
         assert data["ocr_installed"] is True
         assert data["ocr_gpu_available"] is False
-        assert data["ocr_cpu_available"] is True
-        assert data["ocr_recommended_mode"] == "ask_user"
-        assert data["available_actions"] == ["cpu_ocr", "vision"]
+        assert data["ocr_cpu_available"] is False
+        assert data["ocr_recommended_mode"] == "vision_only"
+        assert data["available_actions"] == ["vision"]
 
     def test_enhance_plan_includes_page_decisions_from_quality_and_ocr_probe(self, client, monkeypatch):
         store = documents._store
@@ -571,7 +571,7 @@ class TestDocumentRoutes:
 
         monkeypatch.setattr(documents, "run_rapidocr_enhancement", fake_runner)
 
-        r = client.post(f"/api/documents/{doc.doc_id}/enhance/ocr?mode=cpu")
+        r = client.post(f"/api/documents/{doc.doc_id}/enhance/ocr?mode=gpu")
 
         assert r.status_code == 200
         data = r.json()

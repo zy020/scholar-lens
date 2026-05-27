@@ -44,7 +44,7 @@ def brief_client(tmp_path, monkeypatch):
         deps,
         "get_settings",
         lambda: Settings(
-            _env_file="",
+            _env_file=None,
             api_key="",
             llm=LLMConfig(),
             embedding=EmbeddingConfig(),
@@ -117,14 +117,14 @@ def test_brief_endpoint_uses_brief_specific_timeout(tmp_path, monkeypatch):
         deps,
         "get_settings",
         lambda: Settings(
-            _env_file="",
+            _env_file=None,
             api_key="test-key",
             llm=LLMConfig(api_key="test-key", model="test-model", request_timeout=60),
             embedding=EmbeddingConfig(),
         ),
     )
 
-    captured = {}
+    captured = []
     mock_response = MagicMock()
     mock_response.content = """
     {
@@ -144,8 +144,7 @@ def test_brief_endpoint_uses_brief_specific_timeout(tmp_path, monkeypatch):
 
     class FakeFactory:
         def create(self, config=None, streaming=True):
-            captured["config"] = config
-            captured["streaming"] = streaming
+            captured.append({"config": config, "streaming": streaming})
             return mock_llm
 
     from scholar_lens.core import llm_factory
@@ -165,8 +164,7 @@ def test_brief_endpoint_uses_brief_specific_timeout(tmp_path, monkeypatch):
 
     assert r.status_code == 200
     assert r.json()["source"] == "llm"
-    assert captured["config"].request_timeout >= 120
-    assert captured["streaming"] is False
+    assert any(call["config"].request_timeout >= 120 and call["streaming"] is False for call in captured)
 
 
 from scholar_lens.api.brief_builder import parse_llm_brief_json
