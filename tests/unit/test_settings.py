@@ -89,7 +89,18 @@ class TestSettings:
         assert s.vision is not None
         assert s.vision.api_key == "sk"
 
-    def test_env_file_loads_shared_credentials(self, tmp_path):
+    def test_env_file_loads_shared_credentials(self, tmp_path, monkeypatch):
+        for key in (
+            "API_KEY",
+            "BASE_URL",
+            "LLM__API_KEY",
+            "LLM__BASE_URL",
+            "LLM__MODEL",
+            "EMBEDDING__API_KEY",
+            "EMBEDDING__BASE_URL",
+            "EMBEDDING__MODEL",
+        ):
+            monkeypatch.delenv(key, raising=False)
         env_file = tmp_path / ".env"
         env_file.write_text(
             "API_KEY=env-shared-key\n"
